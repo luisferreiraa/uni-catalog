@@ -1,46 +1,59 @@
 import type { Template } from "../app/types/unimarc"
 
+/**
+ * Interface que define uma heurística de preenchimento automático de campos.
+ * Cada heurística contém:
+ * - pattern: Expressão regular para identificar o tipo de material
+ * - fields: Mapeamento de tags UNIMARC para valores ou funções geradoras
+ */
 interface FieldHeuristic {
     pattern: RegExp
     fields: Record<string, string | ((match: RegExpMatchArray, description: string) => string)>
 }
 
-// Heurísticas otimizadas para diferentes tipos de material
+/**
+ * Conjunto de heurísticas para diferentes tipos de materiais culturais.
+ * Ordem de avaliação é importante - a primeira correspondência será aplicada.
+ */
 const MATERIAL_HEURISTICS: FieldHeuristic[] = [
-    // CDs e música
+    // Heurística para materiais musicais (CDs, álbuns)
     {
         pattern: /cd|disco|álbum|album|música|music/i,
         fields: {
-            "300": "1 disco sonoro",
-            "337": "audio",
-            "338": "disco",
-            "020": "", // ISBN vazio para CDs
+            "300": "1 disco sonoro",        // Descrição física padrão
+            "337": "audio",     // Tipo de conteúdo
+            "338": "disco",     // Tipo de suporte
+            "020": "", // ISBN intencionalmente vazio para CDs
         },
     },
-    // Livros
+    // Heurística para materiais textuais (livros, publicações)
     {
         pattern: /livro|book|romance|ensaio|manual/i,
         fields: {
+            // Função dinâmica para número de páginas
             "300": (match, desc) => {
                 const pages = desc.match(/(\d+)\s*p[áa]g/i)
                 return pages ? `${pages[1]} p.` : "p."
             },
-            "337": "texto",
-            "338": "volume",
+            "337": "texto",     // Tipo de conteúdo
+            "338": "volume",        // Tipo de suporte
         },
     },
-    // DVDs e filmes
+    // Heurística para materiais audiovisuais (DVDs, filmes)
     {
         pattern: /dvd|filme|movie|cinema/i,
         fields: {
-            "300": "1 disco óptico",
-            "337": "vídeo",
-            "338": "disco",
+            "300": "1 disco óptico",        // Descrição física padrão
+            "337": "vídeo",     // Tipo de conteúdo
+            "338": "disco",     // Tipo de suporte
         },
     },
 ]
 
-// Extração de títulos otimizada
+/**
+ * Padrões para extração de títulos de descrições textuais.
+ * Ordenados por probabilidade de acerto - avaliação é feita em ordem.
+ */
 const TITLE_PATTERNS = [
     /["'](.*?)["']/, // Entre aspas
     /«(.*?)»/, // Entre aspas portuguesas
@@ -48,46 +61,68 @@ const TITLE_PATTERNS = [
     /^([^,]+)/, // Primeira parte antes da vírgula
 ]
 
-// Extração de autores
+/**
+ * Padrões para extração de autores de descrições textuais.
+ * Ordenados por probabilidade de acerto.
+ */
 const AUTHOR_PATTERNS = [
     /d[eo]s?\s+([^,]+)/i, // Depois de "dos/das/de"
     /por\s+([^,]+)/i, // Depois de "por"
     /autor[:\s]+([^,]+)/i, // Depois de "autor:"
 ]
 
+/**
+ * Classe responsável pela inferência automática de campos UNIMARC.
+ * Implementa:
+ * - Identificação de tipo de material
+ * - Extração estruturada de metadados
+ * - Geração de campos de controle
+ * - Validação de preenchibilidade automática
+ */
 export class FieldInferenceEngine {
     /**
-     * Infere campos automaticamente baseado na descrição
+     * Infere campos UNIMARC com base na descrição textual e template.
+     * 
+     * Fluxo de processamento:
+     * 1. Aplica heurísticas de tipo de material
+     * 2. Extrai título (campo 245)
+     * 3. Extrai autor (campo 100)
+     * 4. Extrai ano de publicação (campo 260/264)
+     * 
+     * @param description Descrição textual do item
+     * @param template Template UNIMARC sendo utilizado
+     * @returns Objeto com campos inferidos { [tag]: valor }
      */
     inferFields(description: string, template: Template): Record<string, string> {
         const inferred: Record<string, string> = {}
 
-        // Aplica heurísticas de material
+        // 1. Aplica heurísticas de tipo de material (livro, CD, DVD, etc.)
         for (const heuristic of MATERIAL_HEURISTICS) {
             if (heuristic.pattern.test(description)) {
                 for (const [field, value] of Object.entries(heuristic.fields)) {
+                    // Garante que o campo existe no template atual
                     if (this.templateHasField(template, field)) {
                         inferred[field] =
                             typeof value === "function" ? value(description.match(heuristic.pattern)!, description) : value
                     }
                 }
-                break // Usa apenas a primeira heurística que match
+                break // Só aplica a primeira heurística que tiver correspondência
             }
         }
 
-        // Extrai título (campo 245)
+        // 2. Tenta extrair o título (campo 245)
         if (this.templateHasField(template, "245")) {
             const title = this.extractTitle(description)
             if (title) inferred["245"] = title
         }
 
-        // Extrai autor (campo 100)
+        // 3. Tenta extrair o autor (campo 100)
         if (this.templateHasField(template, "100")) {
             const author = this.extractAuthor(description)
             if (author) inferred["100"] = author
         }
 
-        // Extrai ano (campo 260 ou 264)
+        // 4. Extrai o ano de publicação (campo 260 ou 264)
         const year = this.extractYear(description)
         if (year) {
             if (this.templateHasField(template, "264")) {
@@ -100,10 +135,16 @@ export class FieldInferenceEngine {
         return inferred
     }
 
+    /**
+     * Verifica se o template contém um determinado campo (tag)
+     */
     private templateHasField(template: Template, tag: string): boolean {
         return [...template.controlFields, ...template.dataFields].some((field) => field.tag === tag)
     }
 
+    /**
+     * Tenta extrair o título da descrição usando padrões definidos
+     */
     private extractTitle(description: string): string | null {
         for (const pattern of TITLE_PATTERNS) {
             const match = description.match(pattern)
@@ -114,6 +155,9 @@ export class FieldInferenceEngine {
         return null
     }
 
+    /**
+     * Tenta extrair o autor da descrição usando padrões definidos
+     */
     private extractAuthor(description: string): string | null {
         for (const pattern of AUTHOR_PATTERNS) {
             const match = description.match(pattern)
@@ -124,13 +168,16 @@ export class FieldInferenceEngine {
         return null
     }
 
+    /**
+     * Extrai o ano da descrição (apenas anos entre 1900 e 2099)
+     */
     private extractYear(description: string): string | null {
         const yearMatch = description.match(/\b(19|20)\d{2}\b/)
         return yearMatch ? yearMatch[0] : null
     }
 
     /**
-     * CORREÇÃO: Retorna TODOS os campos do template (obrigatórios e opcionais)
+     * Retorna todos os campos (controlFields + dataFields) existentes num template
      */
     getAllTemplateFields(template: Template): string[] {
         const allFields = new Set<string>()
