@@ -2,6 +2,7 @@ export interface Translation {
     id: string
     language: string
     name: string
+    tips?: string[]
 }
 
 export interface ControlField {

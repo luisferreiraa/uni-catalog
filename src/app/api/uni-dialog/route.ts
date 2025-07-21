@@ -264,11 +264,17 @@ export async function POST(req: NextRequest) {
                     }
                 }
 
+                // Extrai dicas (tips) do campo na linguagem certa
+                const tips = field?.translations.find((t) => t.language === language)?.tips ?? []
+
+                // Concatena as dicas, se houver
+                const tipsText = tips.length > 0 ? `\n\n💡 Dicas:\n- ${tips.join("\n- ")}` : ""
+
                 // Retorna a pergunta para o utilizador
                 return NextResponse.json({
                     type: "field-question",
                     field: nextField,
-                    question: `Por favor, forneça: ${fieldName}${subfieldInfo}`,
+                    question: `Por favor, forneça: ${fieldName}${subfieldInfo}.${tipsText}`,
                     conversationState: {
                         ...state,
                         askedField: nextField,      // Marca qual o campo que está a ser perguntado
