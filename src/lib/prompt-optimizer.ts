@@ -151,7 +151,7 @@ export class PromptOptimizer {
 
         return {
             prompt,
-            systemMessage: `Extraia apenas a informação para o campo ${fieldName} em formato UNIMARC. Seja conciso.`,
+            systemMessage: `Forneça APENAS o valor conciso para o campo ${fieldName}. Não inclua explicações, introduções, conclusões ou qualquer texto adicional. Se a informação não estiver explicitamente disponível na descrição, responda com uma string vazia.`,
             maxTokens: isComplexField ? 100 : 50,       // Campos complexos têm mais espaço para resposta
             temperature: 0.1,       // Queremos respostas previsíveis
             model: isComplexField ? "gpt-4-1106-preview" : "gpt-3.5-turbo",     // Usa GPT-4 apenas se necessário

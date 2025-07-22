@@ -21,6 +21,7 @@ model CatalogRecord {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   fields           CatalogField[]
+  textUnimarc      String?
 }
 
 model CatalogField {

@@ -267,8 +267,10 @@ export async function POST(req: NextRequest) {
                 // Extrai dicas (tips) do campo na linguagem certa
                 const tips = field?.translations.find((t) => t.language === language)?.tips ?? []
 
-                // Concatena as dicas, se houver
-                const tipsText = tips.length > 0 ? `\n\n💡 Dicas:\n- ${tips.join("\n- ")}` : ""
+                // Formata as dicas como lista com bullets
+                const tipsText = tips.length > 0
+                    ? `\n\n💡 Dicas:\n${tips.map(tip => `• ${tip}`).join("\n")}`
+                    : ""
 
                 // Retorna a pergunta para o utilizador
                 return NextResponse.json({
@@ -309,6 +311,40 @@ export async function POST(req: NextRequest) {
             }
 
             try {
+
+                // PASSO NOVO: Converter filledFields para formato UNIMARC utilizando Open AI
+                console.log("Converting filled fields to UNIMARC text format...")
+                const unimarcConversionPrompt = `Converta o seguinte objeto JSON de campos UNIMARC para o formato de texto UNIMARC.
+Siga estas regras estritas para CADA campo:
+1.  **Tag do Campo**: Comece com a tag do campo (ex: "001", "200").
+2.  **Indicadores**: Para campos de dados (tags 1xx-9xx), adicione DOIS espaços para os indicadores. Se o JSON contiver indicadores específicos para esse campo, use-os. Caso contrário, use dois espaços em branco ('  ').
+3.  **Subcampos**: Use o delimitador '$' seguido do código do subcampo (ex: '$a', '$b').
+4.  **Valores Simples**: Se o valor do campo no JSON for uma string simples (ex: "Tânia Arêde"), assuma que é o subcampo '$a' e inclua o valor.
+5.  **Valores Objeto**: Se o valor do campo no JSON for um objeto (ex: {"a": "Memorial do convento", "e": "romance"}), cada chave do objeto é um código de subcampo e o seu valor é o conteúdo do subcampo. Inclua todos os subcampos e seus valores.
+6.  **Valores Vazios/Inválidos/Explicações**: Se o valor de um campo no JSON for uma string VAZIA, NULA, ou uma string que CLARAMENTE NÃO É um dado UNIMARC válido (ex: "Para incluir o INTERNATIONAL ARTICLE NUMBER...", "Digite sua resposta...", "N/A", "É um elenco típico...", "A fonte? Ou seeder?"), então represente-o como um subcampo principal vazio (ex: '$a'). NÃO inclua o texto da explicação ou qualquer texto não-UNIMARC no output.
+7.  **Nova Linha**: Cada campo DEVE estar numa nova linha.
+8.  **Sem Texto Adicional**: NÃO inclua qualquer texto adicional, introduções, conclusões, ou qualquer coisa que não seja o formato UNIMARC puro.
+
+Objeto JSON a converter:
+${JSON.stringify(state.filledFields, null, 2)}`
+
+                const unimarcCompletion = await openai.chat.completions.create({
+                    model: "gpt-4o", // Usar um modelo mais capaz para esta conversão
+                    messages: [
+                        {
+                            role: "system",
+                            content:
+                                "Você é um especialista em UNIMARC. Converta o JSON fornecido para o formato de texto UNIMARC EXATO, seguindo as regras estritas. Inclua TODOS os valores válidos. Não inclua introduções, conclusões ou qualquer texto que não seja o UNIMARC puro. Se um valor for inválido ou uma explicação, use um subcampo principal vazio ('$a').",
+                        },
+                        { role: "user", content: unimarcConversionPrompt },
+                    ],
+                    temperature: 0.1, // Manter baixa para resultados consistentes
+                    max_tokens: 1000, // Aumentar para acomodar registos maiores
+                })
+
+                const textUnimarc = unimarcCompletion.choices[0]?.message?.content?.trim() || ""
+                console.log("Generated UNIMARC text:", textUnimarc)
+
                 // Persiste o registo completo na base de dados
                 console.log("Saving record to database...")
                 const recordId = await databaseService.saveRecord({
@@ -317,6 +353,7 @@ export async function POST(req: NextRequest) {
                     templateDesc: `Registro catalogado automaticamente - ${new Date().toLocaleDateString()}`,
                     filledFields: state.filledFields,
                     template: state.currentTemplate,
+                    textUnimarc,
                 })
 
                 console.log("Record saved with ID:", recordId)

@@ -54,6 +54,7 @@ interface CatalogRecord {
     id: string
     createdAt: string
     fields: RecordField[]
+    textUnimarc: string
 }
 
 export default function RecordsList() {
@@ -91,6 +92,7 @@ export default function RecordsList() {
                             </li>
                         ))}
                     </ul>
+                    <div>{record.textUnimarc}</div>
                 </div>
             ))}
         </div>

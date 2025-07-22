@@ -7,6 +7,7 @@ export interface SaveRecordData {
     templateDesc?: string
     filledFields: Record<string, any>
     template: Template
+    textUnimarc: string
 }
 
 export class DatabaseService {
@@ -15,7 +16,7 @@ export class DatabaseService {
      */
     async saveRecord(data: SaveRecordData): Promise<string> {
         try {
-            const { templateId, templateName, templateDesc, filledFields, template } = data
+            const { templateId, templateName, templateDesc, filledFields, template, textUnimarc } = data
 
             // Cria o registro principal
             const catalogRecord = await prisma.catalogRecord.create({
@@ -23,6 +24,7 @@ export class DatabaseService {
                     templateName,
                     templateDesc: templateDesc || `Registro ${templateName}`,
                     recordTemplateId: templateId,
+                    textUnimarc,
                     fields: {
                         create: this.prepareFields(filledFields, template),
                     },

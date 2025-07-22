@@ -74,4 +74,6 @@ export interface CatalogResponse {
     error?: string
     details?: string
     options?: Array<{ name: string; id: string }>
+    tips?: string[]
+    textUnimarc?: string
 }
