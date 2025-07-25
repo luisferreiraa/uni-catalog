@@ -295,7 +295,14 @@ export default function CatalogInterface() {
                                     {Object.entries(response.record || {}).map(([field, value]) => (
                                         <div key={field} className="flex gap-2">
                                             <Badge variant="outline">{field}</Badge>
-                                            <span>{value}</span>
+                                            {/* <span>{value}</span> */}
+
+                                            <span>
+                                                {typeof value === "object" && value !== null
+                                                    ? JSON.stringify(value, null, 2)
+                                                    : String(value)}
+                                            </span>
+
                                         </div>
                                     ))}
                                 </div>

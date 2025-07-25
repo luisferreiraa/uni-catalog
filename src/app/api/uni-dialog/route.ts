@@ -1,3 +1,5 @@
+export const runtime = 'nodejs'
+
 import { type NextRequest, NextResponse } from "next/server"
 import OpenAI from "openai"
 import { templateCache } from "@/lib/template-cache"
@@ -9,6 +11,25 @@ import { databaseService } from "@/lib/database"
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 })
+
+function sanitizeTemplate(template: any) {
+    return {
+        id: template.id,
+        name: template.name,
+        controlFields: template.controlFields?.map((f: any) => ({
+            tag: f.tag,
+            translations: f.translations || [],
+        })),
+        dataFields: template.dataFields?.map((f: any) => ({
+            tag: f.tag,
+            translations: f.translations || [],
+            subFieldDef: f.subFieldDef?.map((sf: any) => ({
+                code: sf.code,
+                name: sf.name,
+            })) || [],
+        })),
+    }
+}
 
 export async function POST(req: NextRequest) {
     try {
@@ -298,11 +319,19 @@ export async function POST(req: NextRequest) {
 
             console.log("Todos os campos e subcampos preenchidos, avançando para confirmação.")
             state.step = "confirmation"
-            // TEMPORARY TEST:
-            return NextResponse.json({
-                type: "debug-test",
-                message: "Reached end of field-filling step successfully!",
+            return new Response(JSON.stringify({
+                type: "record-complete",
+                record: state.filledFields,
                 conversationState: state,
+                template: {
+                    id: state.currentTemplate.id,
+                    name: state.currentTemplate.name,
+                },
+            } as CatalogResponse), {
+                status: 200,
+                headers: {
+                    "Content-Type": "application/json"
+                }
             })
         }
 

@@ -144,6 +144,7 @@ export class DatabaseService {
                                 tag: true,
                                 value: true,
                                 fieldType: true,
+                                subfields: true,
                             },
                         },
                     },

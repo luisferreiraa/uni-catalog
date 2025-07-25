@@ -1,53 +1,66 @@
 "use client"
 
-import { prisma } from "@/lib/prisma"
 import { useEffect, useState } from "react"
+// O import de prisma aqui é para fins de demonstração da função listRecords.
+// Em um projeto real, listRecords seria uma Server Action ou uma API Route separada.
+// import { prisma } from "@/lib/prisma" // Comentado para evitar confusão em um componente cliente
 
-/**
- * Função que retorna uma lista paginada de registros da base de dados.
- * @param page Página atual (padrão = 1)
- * @param limit Quantidade de itens por página (padrão = 20)
- */
-export async function listRecords(page = 1, limit = 20) {
-    try {
-        const skip = (page - 1) * limit
+// A função listRecords deve ser uma Server Action ou uma API Route separada
+// para interagir com o Prisma no lado do servidor.
+// Exemplo de como seria a API Route (app/api/records/route.ts):
+/*
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 
-        // Usa Promise.all para buscar registros e contagem total ao mesmo tempo
-        const [records, total] = await Promise.all([
-            prisma.catalogRecord.findMany({
-                skip,
-                take: limit,
-                orderBy: { createdAt: "desc" },
-                include: {
-                    fields: {
-                        select: {
-                            tag: true,
-                            value: true,
-                            fieldType: true,
-                        },
-                    },
-                },
-            }),
-            prisma.catalogRecord.count(),
-        ])
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const page = parseInt(searchParams.get("page") || "1");
+  const limit = parseInt(searchParams.get("limit") || "20");
 
-        // Retorna objeto com paginação
-        return {
-            records,
-            total,
-            pages: Math.ceil(total / limit),
-            currentPage: page,
-        }
-    } catch (error) {
-        console.error("Erro ao listar registros:", error)
-        throw new Error("Falha ao listar registros")
-    }
+  try {
+    const skip = (page - 1) * limit;
+    const [records, total] = await Promise.all([
+      prisma.catalogRecord.findMany({
+        skip,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+        include: {
+          fields: {
+            select: {
+              tag: true,
+              value: true,
+              fieldType: true,
+              subfields: true, // JSON
+            },
+          },
+        },
+      }),
+      prisma.catalogRecord.count(),
+    ]);
+
+    return NextResponse.json({
+      records,
+      total,
+      pages: Math.ceil(total / limit),
+      currentPage: page,
+    });
+  } catch (error) {
+    console.error("Erro ao listar registros na API:", error);
+    return NextResponse.json({ error: "Falha ao listar registros" }, { status: 500 });
+  }
+}
+*/
+
+interface RecordSubField {
+    code: string
+    value: string
 }
 
 interface RecordField {
     tag: string
-    value: string
+    value: string // Assumindo que é sempre string conforme o schema Prisma
     fieldType: string
+    subfields?: { [key: string]: string | any } // JSON do Prisma, geralmente um objeto para subcampos
 }
 
 interface CatalogRecord {
@@ -62,10 +75,12 @@ export default function RecordsList() {
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
-        // Chamada à API para buscar registros
         const fetchRecords = async () => {
             try {
-                const res = await fetch("/api/records") // endpoint a criar
+                const res = await fetch("/api/records") // Chamada para a sua API Route
+                if (!res.ok) {
+                    throw new Error(`HTTP error! status: ${res.status}`)
+                }
                 const data = await res.json()
                 setRecords(data.records)
             } catch (error) {
@@ -74,7 +89,6 @@ export default function RecordsList() {
                 setLoading(false)
             }
         }
-
         fetchRecords()
     }, [])
 
@@ -88,17 +102,29 @@ export default function RecordsList() {
                     <ul className="space-y-1">
                         {record.fields.map((field, idx) => (
                             <li key={idx} className="text-sm">
-                                <strong>{field.tag}</strong> ({field.fieldType}): {field.value}
+                                <strong>{field.tag}</strong> ({field.fieldType}):{" "}
+                                {/* Renderiza subcampos se 'subfields' for um objeto e tiver chaves */}
+                                {field.subfields && typeof field.subfields === "object" && Object.keys(field.subfields).length > 0 ? (
+                                    <ul className="ml-4 mt-1 space-y-1 list-disc list-inside">
+                                        {Object.entries(field.subfields).map(([subCode, subValue], sidx) => (
+                                            <li key={sidx}>
+                                                <em>${subCode}</em>: {String(subValue)}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    // Caso contrário, exibe o valor principal (que deve ser uma string)
+                                    String(field.value) // Garante que o valor é tratado como string
+                                )}
                             </li>
                         ))}
                     </ul>
-                    <div>{record.textUnimarc}</div>
+                    {/* Exibe o texto UNIMARC gerado */}
+                    <div className="mt-4 p-2 bg-gray-50 rounded-md text-xs font-mono whitespace-pre-wrap">
+                        {record.textUnimarc}
+                    </div>
                 </div>
             ))}
         </div>
     )
 }
-
-
-
-
