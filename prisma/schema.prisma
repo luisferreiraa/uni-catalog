@@ -25,13 +25,15 @@ model CatalogRecord {
 }
 
 model CatalogField {
-  id        String        @id @default(cuid())
-  tag       String
-  value     String
-  subfields Json
-  fieldType FieldType
-  recordId  String
-  record    CatalogRecord @relation(fields: [recordId], references: [id])
+  id            String        @id @default(cuid())
+  tag           String
+  value         String
+  subfields     Json
+  fieldType     FieldType
+  fieldName     String?
+  subfieldNames Json?
+  recordId      String
+  record        CatalogRecord @relation(fields: [recordId], references: [id])
 
   @@index([recordId])
 }

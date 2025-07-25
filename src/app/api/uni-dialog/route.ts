@@ -355,11 +355,34 @@ Siga estas regras estritas para CADA campo:
 1.  **Tag do Campo**: Comece com a tag do campo (ex: "001", "200").
 2.  **Indicadores**: Para campos de dados (tags 1xx-9xx), adicione DOIS espaços para os indicadores. Se o JSON contiver indicadores específicos para esse campo, use-os. Caso contrário, use dois espaços em branco ('  ').
 3.  **Subcampos**: Use o delimitador '$' seguido do código do subcampo (ex: '$a', '$b').
-4.  **Valores Simples**: Se o valor do campo no JSON for uma string simples (ex: "Tânia Arêde"), assuma que é o subcampo '$a' e inclua o valor.
-5.  **Valores Objeto**: Se o valor do campo no JSON for um objeto (ex: {"a": "Memorial do convento", "e": "romance"}), cada chave do objeto é um código de subcampo e o seu valor é o conteúdo do subcampo. Inclua todos os subcampos e seus valores.
-6.  **Valores Vazios/Inválidos/Explicações**: Se o valor de um campo no JSON for uma string VAZIA, NULA, ou uma string que CLARAMENTE NÃO É um dado UNIMARC válido (ex: "Para incluir o INTERNATIONAL ARTICLE NUMBER...", "Digite sua resposta...", "N/A", "É um elenco típico...", "A fonte? Ou seeder?"), então represente-o como um subcampo principal vazio (ex: '$a'). NÃO inclua o texto da explicação ou qualquer texto não-UNIMARC no output.
+4.  **Valores Simples (para campos de controlo ou dados sem subcampos explícitos)**: Se o valor do campo no JSON for uma string simples (ex: "UNIMARC123"), inclua-o diretamente após a tag (e indicadores, se aplicável).
+5.  **Valores Objeto (para campos de dados com subcampos)**: Se o valor do campo no JSON for um objeto (ex: {"a": "Memorial do convento", "e": "romance"}), cada chave do objeto é um código de subcampo e o seu valor é o conteúdo do subcampo. **Inclua TODOS os subcampos e seus valores, mesmo que um subcampo específico esteja vazio.**
+6.  **Valores Vazios/Não Aplicáveis**: Se o valor de um campo no JSON for uma string VAZIA, NULA, ou uma string que representa "não aplicável" (ex: "N/A", "Não se aplica"), ou uma explicação (ex: "Para incluir o INTERNATIONAL ARTICLE NUMBER..."), então represente-o como um subcampo principal vazio (ex: '$a'). NÃO inclua o texto da explicação ou qualquer texto não-UNIMARC no output.
 7.  **Nova Linha**: Cada campo DEVE estar numa nova linha.
 8.  **Sem Texto Adicional**: NÃO inclua qualquer texto adicional, introduções, conclusões, ou qualquer coisa que não seja o formato UNIMARC puro.
+
+**Exemplo de Conversão:**
+JSON de entrada:
+\`\`\`json
+{
+  "200": {
+    "a": "Título Principal",
+    "b": "Subtítulo",
+    "f": "Autor"
+  },
+  "001": "ID_DO_REGISTRO",
+  "101": {
+    "a": "por",
+    "c": "eng"
+  }
+}
+\`\`\`
+Saída UNIMARC esperada:
+\`\`\`
+001 ID_DO_REGISTRO
+101  $apor$ceng
+200  $aTítulo Principal$bSubtítulo$fAutor
+\`\`\`
 
 Objeto JSON a converter:
 ${JSON.stringify(state.filledFields, null, 2)}`
