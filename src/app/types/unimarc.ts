@@ -1,34 +1,61 @@
 export interface Translation {
     id: string
     language: string
-    name: string
+    name: string // Nome do campo principal (ControlFieldTranslation, DataFieldTranslation)
     tips?: string[]
+    ind1Name?: string // Para DataFieldTranslation
+    ind1Tips?: string[] // Para DataFieldTranslation
+    ind2Name?: string // Para DataFieldTranslation
+    ind2Tips?: string[] // Para DataFieldTranslation
+    fieldId?: string // Para ControlFieldTranslation, DataFieldTranslation
+}
+
+// Nova interface para as traduções dos subcampos
+export interface SubfieldDefinitionTranslation {
+    id: string
+    language: string
+    label: string // O nome legível do subcampo está aqui
+    tips?: string[]
+    subfieldId: string
 }
 
 export interface ControlField {
     id: string
     tag: string
-    translations: Translation[]
+    repeatable: boolean
+    mandatory: boolean
+    translations: Translation[] // Estas são as traduções do campo de controlo
+    createdAt: string
 }
 
 export interface SubFieldDef {
     id: string
     code: string
-    name: string
+    repeatable: boolean
+    mandatory: boolean
+    // Removido 'name: string' daqui
+    translations?: SubfieldDefinitionTranslation[] // <--- ADICIONADO: Array de traduções para o subcampo
+    dataFieldId: string
+    createdAt: string
 }
 
 export interface DataField {
     id: string
     tag: string
-    translations: Translation[]
-    subFieldDef: SubFieldDef[]
+    repeatable: boolean
+    mandatory: boolean
+    translations: Translation[] // Estas são as traduções do campo de dados
+    subFieldDef: SubFieldDef[] // Agora SubFieldDef inclui 'translations'
+    createdAt: string
 }
 
 export interface Template {
     id: string
     name: string
+    description?: string
     controlFields: ControlField[]
     dataFields: DataField[]
+    createdAt: string
 }
 
 export interface TemplatesResponse {

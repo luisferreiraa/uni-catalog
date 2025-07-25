@@ -278,6 +278,15 @@ export async function POST(req: NextRequest) {
                     subfieldToAskCode = undefined
                 }
 
+                // ADICIONE ESTAS LINHAS PARA DEPURAR:
+                console.log("DEBUG: subfieldToAskCode:", subfieldToAskCode)
+                console.log("DEBUG: subfieldToAskDef:", JSON.stringify(subfieldToAskDef, null, 2))
+                console.log("DEBUG: subfieldToAskDef.translations:", JSON.stringify(subfieldToAskDef?.translations, null, 2))
+                const subfieldTranslation = subfieldToAskDef?.translations?.find((t) => t.language === language)
+                console.log("DEBUG: subfieldTranslation (found):", JSON.stringify(subfieldTranslation, null, 2))
+                console.log("DEBUG: subfieldTranslation.label:", subfieldTranslation?.label)
+                // FIM DAS LINHAS DE DEPURAR
+
                 // Constrói a pergunta
                 const fieldTranslation = currentFieldDef.translations.find((t) => t.language === language)
                 const fieldName = fieldTranslation?.name || currentFieldTag
@@ -286,8 +295,18 @@ export async function POST(req: NextRequest) {
                 const tipsText = tips.length > 0 ? `\n\n💡 Dicas:\n${tips.map((tip) => `• ${tip}`).join("\n")}` : ""
 
                 let questionText = `Por favor, forneça: ${fieldName} [${currentFieldTag}]`
+                let subfieldNameForResponse: string | null = null // Variável para o subfieldName na resposta
+
                 if (subfieldToAskCode) {
-                    questionText += ` - ${subfieldToAskDef?.name || subfieldToAskCode} ($${subfieldToAskCode})`
+                    let subfieldPart = `$${subfieldToAskCode}`
+                    const subfieldTranslation = subfieldToAskDef?.translations?.find((t) => t.language === language)
+                    if (subfieldTranslation?.label) {
+                        subfieldPart = `${subfieldTranslation.label} (${subfieldPart})`
+                        subfieldNameForResponse = subfieldTranslation.label // Define o nome para a resposta
+                    } else {
+                        subfieldNameForResponse = subfieldToAskCode // Se não houver label, usa o código
+                    }
+                    questionText += ` - ${subfieldPart}`
                 }
                 questionText += `.${tipsText}`
 
@@ -295,7 +314,7 @@ export async function POST(req: NextRequest) {
                     type: "field-question",
                     field: currentFieldTag,
                     subfield: subfieldToAskCode, // Inclui o subcampo na resposta
-                    subfieldName: subfieldToAskDef?.name || null,
+                    subfieldName: subfieldNameForResponse || null,
                     question: questionText,
                     tips: tips, // Mantém as dicas como array para o frontend
                     conversationState: {
@@ -307,18 +326,6 @@ export async function POST(req: NextRequest) {
             }
 
             // Se o loop terminou, significa que todos os campos/subcampos foram preenchidos
-            /* console.log("Todos os campos e subcampos preenchidos, avançando para confirmação.")
-            state.step = "confirmation"
-            return NextResponse.json({
-                type: "record-complete",
-                record: state.filledFields,
-                conversationState: state,
-                template: {
-                    id: state.currentTemplate.id,
-                    name: state.currentTemplate.name,
-                },
-            } as CatalogResponse) */
-
             console.log("Todos os campos e subcampos preenchidos, avançando para confirmação.")
             state.step = "confirmation"
             return new Response(JSON.stringify({
@@ -432,8 +439,10 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                         subfieldNames = {};
                         dataFieldDef.subFieldDef.forEach((sf) => {
                             // Popula subfieldNames com código e nome
-                            (subfieldNames as Record<string, string>)[sf.code] = sf.name;
-                        });
+                            const sfTranslation = sf.translations?.find((t) => t.language === language)
+                                // CORRIGIDO AQUI: Acessar 'label' da tradução do subcampo
+                                ; (subfieldNames as Record<string, string>)[sf.code] = sfTranslation?.label || sf.code
+                        })
                     } else {
                         // É um campo de controlo ou um campo de dados sem subcampos explícitos
                         fieldValue = value ? String(value) : null;
