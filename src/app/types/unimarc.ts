@@ -104,5 +104,6 @@ export interface CatalogResponse {
     details?: string
     options?: Array<{ name: string; id: string }>
     tips?: string[]
+    subfieldTips?: string[]
     textUnimarc?: string
 }

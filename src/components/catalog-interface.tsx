@@ -8,6 +8,9 @@ import { Badge } from "@/components/ui/badge"
 import { Loader2, BookOpen, Disc, Film, CheckCircle, Bug } from "lucide-react"
 import type { CatalogResponse, ConversationState } from "@/app/types/unimarc"
 
+// Importe o novo componente QuestionDisplay
+import QuestionDisplay from "@/components/question-display" // Certifique-se de que o caminho está correto
+
 export default function CatalogInterface() {
     const [description, setDescription] = useState("")
     const [userResponse, setUserResponse] = useState("")
@@ -19,6 +22,7 @@ export default function CatalogInterface() {
 
     // Use a ref para armazenar o estado mais recente da conversa
     const conversationStateRef = useRef<ConversationState | null>(null)
+
     useEffect(() => {
         conversationStateRef.current = conversationState
     }, [conversationState])
@@ -45,7 +49,6 @@ export default function CatalogInterface() {
                     handleSubmit(false) // Acionar o passo de confirmação
                 }
             }, 500) // Pequeno atraso para feedback visual e propagação do estado
-
             return () => clearTimeout(timer) // Limpar o timeout
         }
     }, [response?.type, loading]) // Dependências: reagir apenas ao tipo de resposta e estado de carregamento
@@ -62,7 +65,6 @@ export default function CatalogInterface() {
         }
 
         setLoading(true)
-
         try {
             const payload = {
                 description: description, // Sempre enviar a descrição original
@@ -106,7 +108,10 @@ export default function CatalogInterface() {
                     // useEffect irá lidar com a auto-continuação
                     break
                 case "field-question":
-                    addToHistory("system", data.question || "")
+                    // Não adicionamos a string 'question' ao histórico aqui,
+                    // pois o QuestionDisplay irá renderizá-la graficamente.
+                    // Se quiser manter um histórico de texto simples, pode adicionar aqui.
+                    addToHistory("system", data.question || "") // Mantido para o histórico de texto simples
                     break
                 case "field-auto-filled":
                     addToHistory("system", `Campo ${data.field} preenchido automaticamente: ${data.value}`)
@@ -145,17 +150,14 @@ export default function CatalogInterface() {
                 conversationState: null,
                 language: "pt",
             }
-
             const res = await fetch("/api/uni-dialog", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             })
-
             const data: CatalogResponse = await res.json()
             setResponse(data)
             setConversationState(data.conversationState || null)
-
             addToHistory("user", `Template selecionado manualmente: ${templateName}`)
             // useEffect irá lidar com a auto-continuação
         } catch (error) {
@@ -263,10 +265,11 @@ export default function CatalogInterface() {
                         </div>
                     )}
 
-                    {/* Pergunta de campo */}
+                    {/* Pergunta de campo - AGORA USANDO QuestionDisplay */}
                     {response?.type === "field-question" && (
                         <div className="space-y-4">
-                            <div className="text-sm font-medium">{response.question}</div>
+                            {/* Substitua a linha abaixo pelo QuestionDisplay */}
+                            <QuestionDisplay response={response} />
                             <div className="flex gap-2">
                                 <Input
                                     value={userResponse}
@@ -288,26 +291,19 @@ export default function CatalogInterface() {
                                 <CheckCircle className="w-4 h-4" />
                                 <span className="font-medium">Registro completo!</span>
                             </div>
-
                             <div className="bg-muted p-4 rounded-lg">
                                 <h4 className="font-medium mb-2">Campos preenchidos:</h4>
                                 <div className="space-y-1 text-sm">
                                     {Object.entries(response.record || {}).map(([field, value]) => (
                                         <div key={field} className="flex gap-2">
                                             <Badge variant="outline">{field}</Badge>
-                                            {/* <span>{value}</span> */}
-
                                             <span>
-                                                {typeof value === "object" && value !== null
-                                                    ? JSON.stringify(value, null, 2)
-                                                    : String(value)}
+                                                {typeof value === "object" && value !== null ? JSON.stringify(value, null, 2) : String(value)}
                                             </span>
-
                                         </div>
                                     ))}
                                 </div>
                             </div>
-
                             <Button onClick={() => handleSubmit(false)} disabled={loading} className="w-full">
                                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                                 Gravar Registro
@@ -322,7 +318,6 @@ export default function CatalogInterface() {
                                 <CheckCircle className="w-4 h-4" />
                                 <span className="font-medium">{response.message}</span>
                             </div>
-
                             <Button onClick={resetConversation} variant="outline" className="w-full bg-transparent">
                                 Nova Catalogação
                             </Button>
@@ -355,10 +350,10 @@ export default function CatalogInterface() {
                                 <div
                                     key={index}
                                     className={`p-2 rounded text-sm ${entry.type === "user"
-                                        ? "bg-blue-50 border-l-2 border-blue-500"
-                                        : entry.type === "system"
-                                            ? "bg-gray-50 border-l-2 border-gray-500"
-                                            : "bg-red-50 border-l-2 border-red-500"
+                                            ? "bg-blue-50 border-l-2 border-blue-500"
+                                            : entry.type === "system"
+                                                ? "bg-gray-50 border-l-2 border-gray-500"
+                                                : "bg-red-50 border-l-2 border-red-500"
                                         }`}
                                 >
                                     <div className="flex items-center gap-2 mb-1">
@@ -372,7 +367,6 @@ export default function CatalogInterface() {
                     </CardContent>
                 </Card>
             )}
-
         </div>
     )
 }

@@ -297,6 +297,8 @@ export async function POST(req: NextRequest) {
                 let questionText = `Por favor, forneça: ${fieldName} [${currentFieldTag}]`
                 let subfieldNameForResponse: string | null = null // Variável para o subfieldName na resposta
 
+                let subfieldTips: string[] = [] // Inicializa as dicas do subcampo
+
                 if (subfieldToAskCode) {
                     let subfieldPart = `$${subfieldToAskCode}`
                     const subfieldTranslation = subfieldToAskDef?.translations?.find((t) => t.language === language)
@@ -307,6 +309,9 @@ export async function POST(req: NextRequest) {
                         subfieldNameForResponse = subfieldToAskCode // Se não houver label, usa o código
                     }
                     questionText += ` - ${subfieldPart}`
+
+                    // Dicas do subcampo
+                    subfieldTips = subfieldTranslation?.tips ?? []
                 }
                 questionText += `.${tipsText}`
 
@@ -317,6 +322,7 @@ export async function POST(req: NextRequest) {
                     subfieldName: subfieldNameForResponse || null,
                     question: questionText,
                     tips: tips, // Mantém as dicas como array para o frontend
+                    subfieldTips: subfieldTips,
                     conversationState: {
                         ...state,
                         askedField: currentFieldTag,
