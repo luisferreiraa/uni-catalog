@@ -7,12 +7,13 @@ import { fieldInference } from "@/lib/field-heuristics"
 import { promptOptimizer } from "@/lib/prompt-optimizer"
 import type { CatalogRequest, CatalogResponse, ConversationState, DataField, SubFieldDef } from "@/app/types/unimarc"
 import { databaseService } from "@/lib/database"
+import { FieldType, Prisma } from "@prisma/client"
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 })
 
-function sanitizeTemplate(template: any) {
+/* function sanitizeTemplate(template: any) {
     return {
         id: template.id,
         name: template.name,
@@ -29,7 +30,7 @@ function sanitizeTemplate(template: any) {
             })) || [],
         })),
     }
-}
+} */
 
 export async function POST(req: NextRequest) {
     try {
@@ -294,6 +295,7 @@ export async function POST(req: NextRequest) {
                     type: "field-question",
                     field: currentFieldTag,
                     subfield: subfieldToAskCode, // Inclui o subcampo na resposta
+                    subfieldName: subfieldToAskDef?.name || null,
                     question: questionText,
                     tips: tips, // Mantém as dicas como array para o frontend
                     conversationState: {
@@ -404,6 +406,49 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                 const textUnimarc = unimarcCompletion.choices[0]?.message?.content?.trim() || ""
                 console.log("Generated UNIMARC text:", textUnimarc)
 
+                // Lógica para preparar campos com nomes
+                const fieldsToSave = Object.entries(state.filledFields).map(([tag, value]) => {
+                    let fieldDef;
+                    if (state.currentTemplate) {
+                        fieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
+                            (f) => f.tag === tag,
+                        );
+                    } else {
+                        fieldDef = undefined;
+                    }
+
+                    // Corrige o fieldType para usar o enum FieldType
+                    const fieldType = fieldDef && "subFieldDef" in fieldDef ? FieldType.DATA : FieldType.CONTROL;
+                    const fieldName = fieldDef?.translations.find((t) => t.language === language)?.name || tag;
+
+                    let subfieldNames: Prisma.JsonValue | undefined;
+                    let fieldValue: string | null = null;
+                    let subfieldValues: Prisma.JsonValue | undefined;
+
+                    if (fieldType === FieldType.DATA && typeof value === "object" && value !== null) {
+                        // É um campo de dados com subcampos
+                        subfieldValues = value as Prisma.JsonValue;
+                        const dataFieldDef = fieldDef as DataField;
+                        subfieldNames = {};
+                        dataFieldDef.subFieldDef.forEach((sf) => {
+                            // Popula subfieldNames com código e nome
+                            (subfieldNames as Record<string, string>)[sf.code] = sf.name;
+                        });
+                    } else {
+                        // É um campo de controlo ou um campo de dados sem subcampos explícitos
+                        fieldValue = value ? String(value) : null;
+                    }
+
+                    return {
+                        tag,
+                        value: fieldValue,
+                        subfields: subfieldValues,
+                        fieldType, // Agora usando o enum FieldType
+                        fieldName: fieldName || null,
+                        subfieldNames
+                    };
+                });
+
                 // Persiste o registo completo na base de dados
                 console.log("Saving record to database...")
                 const recordId = await databaseService.saveRecord({
@@ -412,8 +457,16 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                     templateDesc: `Registro catalogado automaticamente - ${new Date().toLocaleDateString()}`,
                     filledFields: state.filledFields,
                     template: state.currentTemplate,
-                    textUnimarc, // PASSE O NOVO CAMPO AQUI
-                })
+                    textUnimarc,
+                    fields: fieldsToSave.map(f => ({
+                        ...f,
+                        // Garante que os valores undefined sejam convertidos para null
+                        value: f.value ?? null,
+                        fieldName: f.fieldName ?? null,
+                        subfields: f.subfields ?? null,
+                        subfieldNames: f.subfieldNames ?? null
+                    }))
+                });
 
                 console.log("Record saved with ID:", recordId)
 

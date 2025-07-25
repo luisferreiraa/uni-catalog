@@ -11,6 +11,7 @@ interface RecordField {
     tag: string
     value: string // Assumindo que é sempre string conforme o schema Prisma
     fieldType: string
+    fieldName: string
     subfields?: { [key: string]: string | any } // JSON do Prisma, geralmente um objeto para subcampos
 }
 
@@ -24,6 +25,7 @@ interface CatalogRecord {
 export default function RecordsList() {
     const [records, setRecords] = useState<CatalogRecord[]>([])
     const [loading, setLoading] = useState(true)
+    const [visibleUnimarc, setVisibleUnimarc] = useState<{ [id: string]: boolean }>({})
 
     useEffect(() => {
         const fetchRecords = async () => {
@@ -34,6 +36,9 @@ export default function RecordsList() {
                 }
                 const data = await res.json()
                 setRecords(data.records)
+
+                const visibilityState = Object.fromEntries(data.records.map((rec: CatalogRecord) => [rec.id, false]))
+                setVisibleUnimarc(visibilityState)
             } catch (error) {
                 console.error("Erro ao buscar registros:", error)
             } finally {
@@ -42,6 +47,10 @@ export default function RecordsList() {
         }
         fetchRecords()
     }, [])
+
+    const toggleUnimarc = (id: string) => {
+        setVisibleUnimarc((prev) => ({ ...prev, [id]: !prev[id] }))
+    }
 
     if (loading) return <div className="text-center">A carregar registos...</div>
 
@@ -53,7 +62,7 @@ export default function RecordsList() {
                     <ul className="space-y-1">
                         {record.fields.map((field, idx) => (
                             <li key={idx} className="text-sm">
-                                <strong>{field.tag}</strong> ({field.fieldType}):{" "}
+                                <strong>{field.tag} - {field.fieldName}</strong> ({field.fieldType}):{" "}
                                 {/* Renderiza subcampos se 'subfields' for um objeto e tiver chaves */}
                                 {field.subfields && typeof field.subfields === "object" && Object.keys(field.subfields).length > 0 ? (
                                     <ul className="ml-4 mt-1 space-y-1 list-disc list-inside">
@@ -70,10 +79,19 @@ export default function RecordsList() {
                             </li>
                         ))}
                     </ul>
-                    {/* Exibe o texto UNIMARC gerado */}
-                    <div className="mt-4 p-2 bg-gray-50 rounded-md text-xs font-mono whitespace-pre-wrap">
-                        {record.textUnimarc}
-                    </div>
+                    {/* Botão para mostrar/esconder o UNIMARC */}
+                    <button
+                        onClick={() => toggleUnimarc(record.id)}
+                        className="mt-4 px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                    >
+                        {visibleUnimarc[record.id] ? "Ocultar UNIMARC" : "Mostrar UNIMARC"}
+                    </button>
+
+                    {visibleUnimarc[record.id] && (
+                        <div className="mt-2 p-2 bg-gray-50 rounded-md text-xs font-mono whitespace-pre-wrap">
+                            {record.textUnimarc}
+                        </div>
+                    )}
                 </div>
             ))}
         </div>

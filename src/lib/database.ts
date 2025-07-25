@@ -1,5 +1,7 @@
+import { FieldType, Prisma } from "@prisma/client"
 import { prisma } from "./prisma"
 import type { Template, DataField } from "@/app/types/unimarc"
+import { JsonValue } from "@prisma/client/runtime/library"
 
 export interface SaveRecordData {
     templateId: string
@@ -8,6 +10,14 @@ export interface SaveRecordData {
     filledFields: Record<string, any>
     template: Template
     textUnimarc: string
+    fields: {
+        tag: string
+        value?: string | null
+        subfields?: JsonValue
+        fieldType: FieldType
+        fieldName?: string | null
+        subfieldNames?: JsonValue
+    }[]
 }
 
 export class DatabaseService {
@@ -16,7 +26,10 @@ export class DatabaseService {
      */
     async saveRecord(data: SaveRecordData): Promise<string> {
         try {
-            const { templateId, templateName, templateDesc, filledFields, template, textUnimarc } = data
+            const { templateId, templateName, templateDesc, textUnimarc } = data;
+
+            // Prepara os campos no formato que o Prisma espera
+            const fieldsInput = this.prepareFieldsForPrisma(data.fields);
 
             // Cria o registro principal
             const catalogRecord = await prisma.catalogRecord.create({
@@ -26,20 +39,32 @@ export class DatabaseService {
                     recordTemplateId: templateId,
                     textUnimarc,
                     fields: {
-                        create: this.prepareFields(filledFields, template),
+                        create: fieldsInput
                     },
                 },
                 include: {
                     fields: true,
                 },
-            })
+            });
 
-            return catalogRecord.id
+            return catalogRecord.id;
         } catch (error) {
-            console.error("Erro ao salvar registro:", error)
-            throw new Error("Falha ao salvar registro na base de dados")
+            console.error("Erro ao salvar registro:", error);
+            throw new Error("Falha ao salvar registro na base de dados");
         }
     }
+
+    private prepareFieldsForPrisma(fields: SaveRecordData['fields']): Prisma.CatalogFieldCreateWithoutRecordInput[] {
+        return fields.map(field => ({
+            tag: field.tag,
+            value: field.value ?? '',
+            subfields: field.subfields ?? Prisma.JsonNull,
+            fieldType: field.fieldType,
+            fieldName: field.fieldName ?? null,
+            subfieldNames: field.subfieldNames ?? Prisma.JsonNull
+        }));
+    }
+
 
     /**
      * Prepara os campos para inserção na base de dados
@@ -144,6 +169,7 @@ export class DatabaseService {
                                 tag: true,
                                 value: true,
                                 fieldType: true,
+                                fieldName: true,
                                 subfields: true,
                             },
                         },
