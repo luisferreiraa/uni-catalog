@@ -43,6 +43,7 @@ export interface ConversationState {
     filledFields: Record<string, any>
     remainingFields: string[]
     askedField?: string
+    askedSubfield?: string
     autoFilledCount?: number
 }
 
@@ -65,6 +66,7 @@ export interface CatalogResponse {
     conversationState?: ConversationState
     template?: { id: string; name: string; description?: string }
     field?: string
+    subfield?: string
     question?: string
     value?: string
     record?: Record<string, any>

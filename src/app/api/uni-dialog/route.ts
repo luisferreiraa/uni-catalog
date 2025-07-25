@@ -3,64 +3,34 @@ import OpenAI from "openai"
 import { templateCache } from "@/lib/template-cache"
 import { fieldInference } from "@/lib/field-heuristics"
 import { promptOptimizer } from "@/lib/prompt-optimizer"
-import type { CatalogRequest, CatalogResponse, ConversationState, DataField } from "@/app/types/unimarc"
+import type { CatalogRequest, CatalogResponse, ConversationState, DataField, SubFieldDef } from "@/app/types/unimarc"
 import { databaseService } from "@/lib/database"
 
-/**
- * Cliente OpenAI configurado com API Key
- * Utilizado para todas as interações com os modelos de IA
- */
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 })
 
-/**
- * Handler principal da API de catalogação
- * Esta rota POST implementa um fluxo de conversação em várias etapas para:
- * 1. Selecionar o template apropriado com base na descrição do item
- * 2. Preencher campos automaticamente quando possível
- * 3. Solicitar informações adicionais ao utilizador quando necessário
- * 4. Confirmar e salvar o registo completo
- * 
- * @param req - Requisição Next.js contendo os dados do formulário
- * @returns Resposta JSON com o próximo passo do fluxo ou mensagem de erro
- */
 export async function POST(req: NextRequest) {
     try {
-        // Extrai e tipa os dados da requisição
         const { description, language = "pt", conversationState, userResponse }: CatalogRequest = await req.json()
 
-        // Logs detalhados para debugging
         console.log("=== DEBUG API CALL ===")
         console.log("Description:", description)
         console.log("UserResponse:", userResponse)
         console.log("ConversationState (received):", JSON.stringify(conversationState, null, 2))
 
-        // Obtém templates disponíveis do cache para melhor performance
         const { templates } = await templateCache.getTemplates()
 
-        // Validação: Verifica se existem templates disponíveis
         if (templates.length === 0) {
-            // Caso não haja templates, retornar erro 503 (serviço indisponível)
             return NextResponse.json(
                 {
                     type: "error",
                     error: "Nenhum template disponível no momento.",
                 } as CatalogResponse,
-                { status: 503 },        // Service Unavailable
+                { status: 503 },
             )
         }
 
-        /**
-         * Inicializa ou clona o estado da conservação
-         * Usamos JSON.parse/stringify para criar uma cópia profunda e evitar mutações acidentais
-         * 
-         * O estado contém:
-         * - step: etapa atual do fluxo
-         * - filledFields: campos já preenchidos
-         * - remainingFields: campos pendentes
-         * - autoFilledCount: contador de campos preenchidos automaticamente
-         */
         const state: ConversationState = conversationState
             ? JSON.parse(JSON.stringify(conversationState))
             : {
@@ -76,35 +46,25 @@ export async function POST(req: NextRequest) {
 
         // ETAPA 1: Seleção de Template
         if (state.step === "template-selection") {
-            /**
-             * Constrói o prompt otimizado para seleção de template
-             * O promtOptimizer ajusta:
-             * - O texto do prompt com base no contexto
-             * - A mensagem do sistema para guiar a IA
-             * - Parâmetros como temperatura e maxTokens
-             */
             const { prompt, systemMessage, maxTokens, temperature, model } = promptOptimizer.buildPrompt(
                 "template-selection",
                 description,
                 { templates, language },
             )
 
-            // Chama a API da OpenAI para determinar o template mais adequado
             const completion = await openai.chat.completions.create({
                 model,
                 messages: [
                     { role: "system", content: systemMessage },
                     { role: "user", content: prompt },
                 ],
-                temperature,        // Controla a criatividade da resposta
-                max_tokens: maxTokens,      // Limita o tamanho da resposta
+                temperature,
+                max_tokens: maxTokens,
             })
 
-            // Extrai e valida o template sugerido pela IA
             const templateName = completion.choices[0]?.message?.content?.trim()
             const selectedTemplate = templates.find((t) => t.name === templateName)
 
-            // Fallback: Se a IA não identificar um template válido
             if (!selectedTemplate) {
                 return NextResponse.json(
                     {
@@ -112,14 +72,10 @@ export async function POST(req: NextRequest) {
                         error: "Template não identificado. Escolha manualmente:",
                         options: templates.map((t) => ({ name: t.name, id: t.id })),
                     } as CatalogResponse,
-                    { status: 400 },        // Bad request
+                    { status: 400 },
                 )
             }
 
-            // Processa os campos do template selecionado:
-            // 1. Obtém todos os campos obrigatórios
-            // 2. Tenta preencher automaticamente com base na descrição
-            // 3. Identifica campos restantes que precisam de intervenção manual
             const allTemplateFields = fieldInference.getAllTemplateFields(selectedTemplate)
             const autoFilled = fieldInference.inferFields(description, selectedTemplate)
             const remainingFields = allTemplateFields.filter((field) => !(field in autoFilled))
@@ -128,7 +84,6 @@ export async function POST(req: NextRequest) {
             console.log("Auto filled (initial):", autoFilled)
             console.log("Remaining after initial auto-fill:", remainingFields)
 
-            // Retorna o template seleionado e o progresso inicial
             return NextResponse.json({
                 type: "template-selected",
                 conversationState: {
@@ -148,7 +103,6 @@ export async function POST(req: NextRequest) {
 
         // ETAPA 2: Preenchimento de Campos
         if (state.step === "field-filling") {
-            // Validade: Verifica se o template está definido
             if (!state.currentTemplate) {
                 return NextResponse.json(
                     {
@@ -159,50 +113,95 @@ export async function POST(req: NextRequest) {
                 )
             }
 
-            /**
-             * Processa a resposta do utilizador a uma pergunta anterior, se existir
-             * Adiciona a resposta ao estado e remove o campo da lista de pendentes
-             */
+            // 1. Processa a resposta do utilizador (se houver um campo/subcampo perguntado)
             if (state.askedField && userResponse !== undefined && userResponse !== null) {
-                console.log(`Processing user response for field ${state.askedField}: ${userResponse}`)
-                state.filledFields[state.askedField] = userResponse.trim()
-                state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
-                delete state.askedField     // Remove o campo perguntado do estado
-                console.log("After user response - remaining fields:", state.remainingFields)
+                const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
+                    (f) => f.tag === state.askedField,
+                )
+
+                if (
+                    currentFieldDef &&
+                    "subFieldDef" in currentFieldDef &&
+                    Array.isArray((currentFieldDef as DataField).subFieldDef) &&
+                    (currentFieldDef as DataField).subFieldDef.length > 0
+                ) {
+                    // É um campo de dados com subcampos
+                    const dataFieldDef = currentFieldDef as DataField // Asserção de tipo aqui
+                    if (!state.filledFields[state.askedField]) {
+                        state.filledFields[state.askedField] = {} // Inicializa como objeto para subcampos
+                    }
+                    state.filledFields[state.askedField][state.askedSubfield!] = userResponse.trim()
+                    console.log(`User response for ${state.askedField}$${state.askedSubfield}: ${userResponse}`)
+
+                    // Encontra o índice do subcampo atual
+                    const currentSubfieldIdx = dataFieldDef.subFieldDef.findIndex((sf) => sf.code === state.askedSubfield)
+                    const nextSubfieldIdx = currentSubfieldIdx + 1
+
+                    if (nextSubfieldIdx < dataFieldDef.subFieldDef.length) {
+                        // Ainda há subcampos para este campo principal
+                        state.askedSubfield = dataFieldDef.subFieldDef[nextSubfieldIdx].code
+                        // Não remove o campo principal de remainingFields ainda
+                        // Não limpa askedField, pois ainda estamos no mesmo campo principal
+                    } else {
+                        // Todos os subcampos para este campo principal foram preenchidos
+                        state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
+                        delete state.askedField // Agora sim, limpa o campo principal
+                        delete state.askedSubfield
+                        console.log(`All subfields for ${dataFieldDef.tag} filled. Remaining main fields:`, state.remainingFields)
+                    }
+                } else {
+                    // É um campo de controlo ou campo de dados sem subcampos explícitos (apenas $a)
+                    state.filledFields[state.askedField] = userResponse.trim()
+                    state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
+                    delete state.askedField
+                    delete state.askedSubfield
+                    console.log(`Field ${currentFieldDef?.tag} filled. Remaining main fields:`, state.remainingFields)
+                }
             }
 
-            // Verifica se ainda há campo para preencher
-            if (state.remainingFields.length > 0) {
-                const nextField = state.remainingFields[0]
-                console.log(`Attempting to process next field: ${nextField}`)
+            // 2. Determina o próximo campo/subcampo a ser perguntado ou preenchido automaticamente
+            // Loop para processar campos/subcampos até que uma pergunta seja gerada ou todos os campos sejam preenchidos
+            while (state.remainingFields.length > 0 || (state.askedField && state.askedSubfield)) {
+                const currentFieldTag = state.askedField || state.remainingFields[0]
+                const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
+                    (f) => f.tag === currentFieldTag,
+                )
 
-                /**
-                 * Tenta preencher o campo automaticamente se possível
-                 * Usa abordagens diferentes para campos de controlo vs campos de dados
-                 */
-                if (fieldInference.canAutoFill(nextField)) {
+                if (!currentFieldDef) {
+                    console.error(`Campo ${currentFieldTag} não encontrado na definição do template. Removendo.`)
+                    state.remainingFields.shift() // Remove o campo inválido
+                    delete state.askedField
+                    delete state.askedSubfield
+                    continue // Tenta o próximo campo
+                }
+
+                const isDataFieldWithSubfields =
+                    "subFieldDef" in currentFieldDef &&
+                    Array.isArray((currentFieldDef as DataField).subFieldDef) &&
+                    (currentFieldDef as DataField).subFieldDef.length > 0
+
+                // Lógica de preenchimento automático para campos principais (não para subcampos individuais)
+                // Se for um campo de dados com subcampos, NÃO tentamos auto-preencher, sempre perguntamos subcampo a subcampo.
+                if (!isDataFieldWithSubfields && fieldInference.canAutoFill(currentFieldTag)) {
                     try {
-                        console.log(`Trying to auto-fill field: ${nextField}`)
-
+                        console.log(`Tentando preencher automaticamente o campo: ${currentFieldTag}`)
                         let fieldValue = ""
-                        const controlField = state.currentTemplate.controlFields.find((f) => f.tag === nextField)
+                        const controlField = state.currentTemplate.controlFields.find((f) => f.tag === currentFieldTag)
 
-                        // Campos de controlo: preenchimento baseado em regras
                         if (controlField) {
-                            fieldValue = fieldInference.generateControlFieldValue(nextField, description)
+                            fieldValue = fieldInference.generateControlFieldValue(currentFieldTag, description)
                         } else {
-                            // Campos de dados: usar IA para gerar valor contextual
+                            // Para campos de dados auto-preenchíveis (sem subcampos explícitos)
                             const { prompt, systemMessage, maxTokens, temperature, model } = promptOptimizer.buildPrompt(
                                 "field-filling",
                                 description,
                                 {
                                     currentTemplate: state.currentTemplate,
                                     filledFields: state.filledFields,
-                                    remainingFields: [nextField],
+                                    remainingFields: [currentFieldTag],
                                     language,
                                 },
                             )
-
                             const completion = await openai.chat.completions.create({
                                 model,
                                 messages: [
@@ -212,80 +211,80 @@ export async function POST(req: NextRequest) {
                                 temperature,
                                 max_tokens: maxTokens,
                             })
-
                             fieldValue = completion.choices[0]?.message?.content?.trim() || ""
                         }
 
-                        console.log(`Auto-fill result for field ${nextField}:`, fieldValue)
-
-                        // Se obteve um valor válido, atualiza o estado
                         if (fieldValue && fieldValue.length > 0) {
-                            state.filledFields[nextField] = fieldValue
-                            state.remainingFields = state.remainingFields.filter((f) => f !== nextField)
+                            state.filledFields[currentFieldTag] = fieldValue
+                            state.remainingFields = state.remainingFields.filter((f) => f !== currentFieldTag)
                             state.autoFilledCount = (state.autoFilledCount || 0) + 1
-
-                            console.log(`Field ${nextField} auto-filled with: ${fieldValue}`)
-                            console.log("Remaining fields after auto-fill:", state.remainingFields)
-
-                            // Notifica o frontend sobre o campo preenchido automaticamente
+                            console.log(`Campo ${currentFieldTag} preenchido automaticamente com: ${fieldValue}`)
+                            // Retorna a resposta de auto-preenchimento. O frontend irá chamar novamente para o próximo passo.
                             return NextResponse.json({
                                 type: "field-auto-filled",
-                                field: nextField,
+                                field: currentFieldTag,
                                 value: fieldValue,
                                 conversationState: state,
                             } as CatalogResponse)
                         } else {
-                            console.log(`Auto-fill failed for field ${nextField}, will ask user.`)
+                            console.log(
+                                `Preenchimento automático falhou para o campo ${currentFieldTag}, irá perguntar ao utilizador.`,
+                            )
                         }
                     } catch (error) {
-                        console.warn(`Erro no preenchimento automático do campo ${nextField}:`, error)
-                        // Continua para perguntar manualmente em caso de erro
+                        console.warn(`Erro no preenchimento automático do campo ${currentFieldTag}:`, error)
                     }
                 }
 
-                // Se não foi possível preencher automaticamente, prepara a pergunta ao utilizador
-                console.log(`Asking user for field: ${nextField}`)
+                // Se não foi auto-preenchido ou é um campo de dados com subcampos, pergunta ao utilizador
+                let subfieldToAskCode: string | undefined
+                let subfieldToAskDef: SubFieldDef | undefined
 
-                // Encontra a definição completa do campo (controlo ou dados)
-                const field = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
-                    (f) => f.tag === nextField,
-                )
-
-                // Obtém o nome traduzido do campo ou usa o código como fallback
-                const fieldName = field?.translations.find((t) => t.language === language)?.name || nextField
-
-                // Para campos de dados, adiciona informações sobre subcampos se disponível
-                let subfieldInfo = ""
-                if (field && "subFieldDef" in field && Array.isArray(field.subFieldDef)) {
-                    const dataField = field as DataField
-                    const mainSubfield = dataField.subFieldDef.find((sf) => sf.code === "a")
-                    if (mainSubfield) {
-                        subfieldInfo = ` (${mainSubfield.name})`
+                if (isDataFieldWithSubfields) {
+                    const dataFieldDef = currentFieldDef as DataField // Asserção de tipo aqui
+                    // Se já estamos a perguntar um subcampo para este campo principal
+                    if (state.askedField === currentFieldTag && state.askedSubfield) {
+                        subfieldToAskCode = state.askedSubfield // Continua com o subcampo atual
+                        subfieldToAskDef = dataFieldDef.subFieldDef.find((sf) => sf.code === subfieldToAskCode)
+                    } else {
+                        // Começa a perguntar o primeiro subcampo deste campo principal
+                        subfieldToAskCode = dataFieldDef.subFieldDef[0].code
+                        subfieldToAskDef = dataFieldDef.subFieldDef[0]
                     }
+                } else {
+                    // Campo de controlo ou campo de dados sem subcampos explícitos
+                    subfieldToAskCode = undefined
                 }
 
-                // Extrai dicas (tips) do campo na linguagem certa
-                const tips = field?.translations.find((t) => t.language === language)?.tips ?? []
+                // Constrói a pergunta
+                const fieldTranslation = currentFieldDef.translations.find((t) => t.language === language)
+                const fieldName = fieldTranslation?.name || currentFieldTag
+                // Correção: Acessar tips diretamente do fieldTranslation
+                const tips = fieldTranslation?.tips ?? []
+                const tipsText = tips.length > 0 ? `\n\n💡 Dicas:\n${tips.map((tip) => `• ${tip}`).join("\n")}` : ""
 
-                // Formata as dicas como lista com bullets
-                const tipsText = tips.length > 0
-                    ? `\n\n💡 Dicas:\n${tips.map(tip => `• ${tip}`).join("\n")}`
-                    : ""
+                let questionText = `Por favor, forneça: ${fieldName} [${currentFieldTag}]`
+                if (subfieldToAskCode) {
+                    questionText += ` - ${subfieldToAskDef?.name || subfieldToAskCode} ($${subfieldToAskCode})`
+                }
+                questionText += `.${tipsText}`
 
-                // Retorna a pergunta para o utilizador
                 return NextResponse.json({
                     type: "field-question",
-                    field: nextField,
-                    question: `Por favor, forneça: ${fieldName}${subfieldInfo}.${tipsText}`,
+                    field: currentFieldTag,
+                    subfield: subfieldToAskCode, // Inclui o subcampo na resposta
+                    question: questionText,
+                    tips: tips, // Mantém as dicas como array para o frontend
                     conversationState: {
                         ...state,
-                        askedField: nextField,      // Marca qual o campo que está a ser perguntado
+                        askedField: currentFieldTag,
+                        askedSubfield: subfieldToAskCode,
                     },
                 } as CatalogResponse)
             }
 
-            // Todos os campos foram preenchidos - avança para confirmação
-            console.log("All fields filled, moving to confirmation")
+            // Se o loop terminou, significa que todos os campos/subcampos foram preenchidos
+            /* console.log("Todos os campos e subcampos preenchidos, avançando para confirmação.")
             state.step = "confirmation"
             return NextResponse.json({
                 type: "record-complete",
@@ -295,10 +294,19 @@ export async function POST(req: NextRequest) {
                     id: state.currentTemplate.id,
                     name: state.currentTemplate.name,
                 },
-            } as CatalogResponse)
+            } as CatalogResponse) */
+
+            console.log("Todos os campos e subcampos preenchidos, avançando para confirmação.")
+            state.step = "confirmation"
+            // TEMPORARY TEST:
+            return NextResponse.json({
+                type: "debug-test",
+                message: "Reached end of field-filling step successfully!",
+                conversationState: state,
+            })
         }
 
-        // ETAPA 3: Confirmação e Gravação na Base de Dados
+        // ETAPA 3: Confirmação e Gravação
         if (state.step === "confirmation") {
             if (!state.currentTemplate) {
                 return NextResponse.json(
@@ -311,7 +319,6 @@ export async function POST(req: NextRequest) {
             }
 
             try {
-
                 // PASSO NOVO: Converter filledFields para formato UNIMARC utilizando Open AI
                 console.log("Converting filled fields to UNIMARC text format...")
                 const unimarcConversionPrompt = `Converta o seguinte objeto JSON de campos UNIMARC para o formato de texto UNIMARC.
@@ -353,7 +360,7 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                     templateDesc: `Registro catalogado automaticamente - ${new Date().toLocaleDateString()}`,
                     filledFields: state.filledFields,
                     template: state.currentTemplate,
-                    textUnimarc,
+                    textUnimarc, // PASSE O NOVO CAMPO AQUI
                 })
 
                 console.log("Record saved with ID:", recordId)
@@ -364,9 +371,10 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                     message: `Registro gravado com sucesso! ID: ${recordId}. ${state.autoFilledCount || 0} campos preenchidos automaticamente.`,
                     record: state.filledFields,
                     recordId,
+                    textUnimarc, // INCLUA O textUnimarc NA RESPOSTA PARA O FRONTEND
                     conversationState: {
                         ...state,
-                        step: "completed",      // Marca o fluxo como concluído
+                        step: "completed",
                     },
                 } as CatalogResponse)
             } catch (error) {
@@ -377,12 +385,12 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                         error: "Erro ao gravar registro na base de dados.",
                         details: error instanceof Error ? error.message : "Erro desconhecido",
                     } as CatalogResponse,
-                    { status: 500 },        // Internal Server Error
+                    { status: 500 },
                 )
             }
         }
 
-        // Fallback para estado inválido/ não reconhecido
+        // Fallback para estado inválido
         return NextResponse.json(
             {
                 type: "error",
@@ -391,7 +399,6 @@ ${JSON.stringify(state.filledFields, null, 2)}`
             { status: 400 },
         )
     } catch (error: any) {
-        // Tratamento genérico de erros
         console.error("Erro na API:", error)
         return NextResponse.json(
             {
@@ -403,4 +410,3 @@ ${JSON.stringify(state.filledFields, null, 2)}`
         )
     }
 }
-
