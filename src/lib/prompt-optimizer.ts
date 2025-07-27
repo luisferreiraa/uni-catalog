@@ -9,7 +9,7 @@ interface OptimizedPrompt {
     systemMessage: string       // Instrução de sistema que configura o comportamento da IA
     maxTokens: number       // Limite máximo de tokens que a IA pode gerar
     temperature: number      // Grau de aleatoriedade da resposta (0.0 = determinístico, 1.0 = mais criativo)
-    model: "gpt-3.5-turbo" | "gpt-4-1106-preview"       // Modelo OpenAI utilizado
+    model: "gpt-3.5-turbo" | "gpt-4-1106-preview" | "gpt-4o"      // Modelo OpenAI utilizado
 }
 
 /**
@@ -62,6 +62,10 @@ export class PromptOptimizer {
             case "template-selection":
                 return this.buildTemplateSelectionPrompt(description, templates)
 
+            case "bulk-field-filling":
+                if (!currentTemplate) throw new Error("Template é obrigatório para preenchimento em massa")
+                return this.buildBulkFieldFillingPrompt(description, currentTemplate, language)
+
             case "field-filling":
                 return this.buildFieldFillingPrompt(description, currentTemplate!, filledFields, remainingFields, language)
 
@@ -98,6 +102,85 @@ export class PromptOptimizer {
             temperature: 0.1,       // Baixa aleatoriedade: queremos respostas determinísticas
             model: "gpt-3.5-turbo", // Modelo mais leve e barato para tarefas simples
         }
+    }
+
+    /**
+     * Constrói um prompt para tentar preencher TODOS os campos/subcampos de uma só vez
+     * 
+     * - Usa GPT-4 para extrair o máximo possível de informações
+     * - Retorna APENAS JSON no formato { "200": { "a": "...", "b": "..." }, "101": { "a": "..."} }
+     * - Campos não inferidos devem ser omitidos ou retornados com string vazia
+     */
+    private buildBulkFieldFillingPrompt(
+        description: string,
+        template: Template,
+        language: string
+    ): OptimizedPrompt {
+
+        // Constrói uma descrição estruturada do template para a OpenAI
+        const templateStructure = this.buildTemplateStructureDescription(template, language)
+
+        const systemMessage = `Você é um especialista em catalogação UNIMARC.
+        Analise a descrição fornecida e extraia TODOS os valores possíveis para os campos e subcampos do template.
+        
+        REGRAS IMPORTANTES:
+        1. Retorne APENAS um objeto JSON válido
+        2. Para campos de controle: use string simples (ex: "001": "UNIMARC123")
+        3. Para campos de dados com subcampos: use objeto (ex: "200": {"a": "Título", "f": "Autor"})
+        4. Se não conseguir inferir um valor, NÃO inclua o campo no JSON
+        5. Seja conservador - só inclua valores que tem a certeza
+        6. Para campos de controle como 001, 005, 008, gere valores apropriados
+        7. NÃO inclua texto explicativo, apenas o JSON
+        
+        ESTRUTURA DO TEMPLATE:
+        ${templateStructure}`
+
+        const prompt = `Com base na seguinte descrição, extraia todos os valores possíveis para catalogação UNIMAR:
+        
+        DESCRIÇÃO: "${description}"
+        
+        Retorne apenas o JSON com os campos que conseguir preencher:`
+
+        return {
+            prompt,
+            systemMessage,
+            maxTokens: 2000,
+            temperature: 0.2,
+            model: "gpt-4o"
+        }
+    }
+
+    /**
+     * Constrói uma descrição estruturada do template para ajudar a OpenAI
+     * @param template 
+     * @param language 
+     * @returns 
+     */
+    private buildTemplateStructureDescription(template: Template, language: string): string {
+        let structure = "CAMPOS DE CONTROLE:\n"
+
+        template.controlFields.forEach((field) => {
+            const translation = field.translations.find((t) => t.language === language)
+            const fieldName = translation?.name || field.tag
+            structure += `- ${field.tag}: ${fieldName}\n`
+        })
+
+        structure += "\nCAMPOS DE DADOS:\n"
+        template.dataFields.forEach((field) => {
+            const translation = field.translations.find((t) => t.language === language)
+            const fieldName = translation?.name || field.tag
+            structure += `- ${field.tag}: ${fieldName}\n`
+
+            if (field.subFieldDef && field.subFieldDef.length > 0) {
+                field.subFieldDef.forEach((subfield) => {
+                    const subTranslation = subfield.translations?.find((t) => t.language === language)
+                    const subName = subTranslation?.label || subfield.code
+                    structure += `  - $${subfield.code}: ${subName}\n`
+                })
+            }
+        })
+
+        return structure
     }
 
     /**

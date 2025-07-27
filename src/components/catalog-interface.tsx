@@ -7,75 +7,62 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, BookOpen, Disc, Film, CheckCircle, Bug } from "lucide-react"
 import type { CatalogResponse, ConversationState } from "@/app/types/unimarc"
-import QuestionDisplay from "@/components/question-display"     // Componente para exibição de perguntas formatadas
 
-/**
- * Componente principal para interface de catalogação UNIMARC
- * Gerencia todo o fluxo e conversa com o servidor de catalogação
- */
+// Importe o novo componente QuestionDisplay
+import QuestionDisplay from "@/components/question-display" // Certifique-se de que o caminho está correto
+
 export default function CatalogInterface() {
-    // Estados do componente
-    const [description, setDescription] = useState("")      // Descrição do material a ser catalogado
-    const [userResponse, setUserResponse] = useState("")        // Resposta do utilizador às perguntas
-    const [conversationState, setConversationState] = useState<ConversationState | null>(null)      // Estado atual da conversa
-    const [response, setResponse] = useState<CatalogResponse | null>(null)      // Última resposta da API
-    const [loading, setLoading] = useState(false)       // Estado de carregamento
-    const [history, setHistory] = useState<Array<{ type: string; content: string; timestamp: Date }>>([])       // Histórico da conversa
-    const [debugMode, setDebugMode] = useState(false)       // Modo de debug
+    const [description, setDescription] = useState("")
+    const [userResponse, setUserResponse] = useState("")
+    const [conversationState, setConversationState] = useState<ConversationState | null>(null)
+    const [response, setResponse] = useState<CatalogResponse | null>(null)
+    const [loading, setLoading] = useState(false)
+    const [history, setHistory] = useState<Array<{ type: string; content: string; timestamp: Date }>>([])
+    const [debugMode, setDebugMode] = useState(false)
 
-    // Ref para acessar o estado mais recente da conversa em callbacks assíncronos
+    // Use a ref para armazenar o estado mais recente da conversa
     const conversationStateRef = useRef<ConversationState | null>(null)
 
-    // Atualiza a ref sempre que o estado muda
     useEffect(() => {
         conversationStateRef.current = conversationState
     }, [conversationState])
 
-    /**
-     * Adiciona uma entrada ao histórico da conversa
-     * @param type Tipo da mensagem ('user', 'system' ou 'error')
-     * @param content Conteúdo da mensagem
-     */
     const addToHistory = (type: string, content: string) => {
         setHistory((prev) => [...prev, { type, content, timestamp: new Date() }])
     }
 
-    /**
-     * Efeito para auto-continuar o fluxo após certas respostas da API
-     * - Template selecionado
-     * - Campo auto-preenchido
-     */
+    // Este efeito irá acionar o próximo passo após uma resposta da API
     useEffect(() => {
-        if (loading) return     // Não fazer nada durante carregamentos
+        if (loading) return // Não acionar se já estiver carregando
 
-        // Auto-continua após seleção de template ou campo auto-preenchido
-        if (response?.type === "template-selected" || response?.type === "field-auto-filled") {
+        // Auto-continuar após seleção de template ou campo auto-preenchido
+        if (
+            response?.type === "template-selected" ||
+            response?.type === "field-auto-filled" ||
+            response?.type === "bulk-auto-filled"
+        ) {
             const timer = setTimeout(() => {
-                // Usa a ref para obter o estado mais recente
+                // Usar a ref para obter o estado mais recente
                 const latestState = conversationStateRef.current
                 if (latestState?.step === "field-filling" && latestState.remainingFields.length > 0) {
                     console.log("useEffect: Auto-continuing to next field...")
-                    handleSubmit(false) // Aciona o próximo passo
+                    handleSubmit(false) // Acionar o próximo passo
                 } else if (latestState?.step === "field-filling" && latestState.remainingFields.length === 0) {
-                    // Todos os campos preenchidos, aciona record-complete
+                    // Todos os campos preenchidos, acionar record-complete
                     console.log("useEffect: All fields filled, triggering record-complete...")
-                    handleSubmit(false) // Aciona o passo de confirmação
+                    handleSubmit(false) // Acionar o passo de confirmação
                 }
             }, 500) // Pequeno atraso para feedback visual e propagação do estado
-            return () => clearTimeout(timer) // Limpa o timeout
+            return () => clearTimeout(timer) // Limpar o timeout
         }
-    }, [response?.type, loading]) // Dependências: reagi apenas ao tipo de resposta e estado de carregamento
+    }, [response?.type, loading]) // Dependências: reagir apenas ao tipo de resposta e estado de carregamento
 
-    /**
-     * Manipula o envio de dados para a API
-     * @param isInitial Indica se é a primeira chamada (descrição inicial)
-     */
     const handleSubmit = async (isInitial = false) => {
-        // Previne múltiplas submissões ou chamadas quando já estiver a carregar
+        // Prevenir múltiplas submissões ou chamadas quando já estiver carregando
         if (loading) return
 
-        // Se não é inicial, e não há resposta do utilizador, e estamos atualmente a pedir uma pergunta, então retorna.
-        // Isso impede a auto-continuação quando a entrada do utilizador é esperada.
+        // Se não é inicial, e não há resposta do usuário, e estamos atualmente a pedir uma pergunta, então retornar.
+        // Isso impede a auto-continuação quando a entrada do usuário é esperada.
         if (!isInitial && !userResponse.trim() && response?.type === "field-question") {
             console.log("handleSubmit: Skipping call - waiting for user input.")
             return
@@ -83,11 +70,10 @@ export default function CatalogInterface() {
 
         setLoading(true)
         try {
-            // Preparar payload para a API
             const payload = {
-                description: description,       // Envia sempre a descrição original
+                description: description, // Sempre enviar a descrição original
                 userResponse: isInitial ? undefined : userResponse,
-                conversationState: isInitial ? null : conversationStateRef.current, // Usa a ref para o estado mais recente
+                conversationState: isInitial ? null : conversationStateRef.current, // Usar a ref para o estado mais recente
                 language: "pt",
             }
 
@@ -95,14 +81,12 @@ export default function CatalogInterface() {
                 console.log("Sending payload:", payload)
             }
 
-            // Registar no histórico
             if (isInitial) {
                 addToHistory("user", `Descrição: ${description}`)
             } else if (userResponse) {
                 addToHistory("user", userResponse)
             }
 
-            // Chamada à API
             const res = await fetch("/api/uni-dialog", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -116,9 +100,9 @@ export default function CatalogInterface() {
             }
 
             setResponse(data)
-            setConversationState(data.conversationState || null) // Atualiza o estado
+            setConversationState(data.conversationState || null) // Atualizar o estado
 
-            // Processar reposta e atualizar histórico
+            // Adicionar resposta ao histórico
             switch (data.type) {
                 case "template-selected":
                     addToHistory("system", `Template selecionado: ${data.template?.name}`)
@@ -130,7 +114,7 @@ export default function CatalogInterface() {
                 case "field-question":
                     // Não adicionamos a string 'question' ao histórico aqui,
                     // pois o QuestionDisplay irá renderizá-la graficamente.
-                    // Se quisermos manter um histórico de texto simples, podemos adicionar aqui.
+                    // Se quiser manter um histórico de texto simples, pode adicionar aqui.
                     addToHistory("system", data.question || "") // Mantido para o histórico de texto simples
                     break
                 case "field-auto-filled":
@@ -149,6 +133,14 @@ export default function CatalogInterface() {
                 case "error":
                     addToHistory("error", data.error || "Erro desconhecido")
                     break
+                case "bulk-auto-filled":
+                    addToHistory("system", data.message || "Preenchimento automático concluído")
+                    if (data.filledFields) {
+                        const fieldsCount = Object.keys(data.filledFields).length
+                        addToHistory("system", `${fieldsCount} campos preenchidos automaticamente`)
+                    }
+                    // useEffect irá lidar com a auto-continuação
+                    break
             }
 
             if (!isInitial) {
@@ -162,10 +154,6 @@ export default function CatalogInterface() {
         }
     }
 
-    /**
-     * Manipula a seleção manual do template
-     * @param templateName Nome do template selecionado
-     */
     const handleTemplateSelection = async (templateName: string) => {
         setLoading(true)
         try {
@@ -191,7 +179,6 @@ export default function CatalogInterface() {
         }
     }
 
-    // Reinicia toda a conversa
     const resetConversation = () => {
         setDescription("")
         setUserResponse("")
@@ -200,11 +187,6 @@ export default function CatalogInterface() {
         setHistory([])
     }
 
-    /**
-     * Retorna ícone apropriado para o tipo de material
-     * @param templateName Nome do template
-     * @returns Componente de ícone
-     */
     const getIcon = (templateName?: string) => {
         if (!templateName) return <BookOpen className="w-4 h-4" />
         if (templateName.toLowerCase().includes("música") || templateName.toLowerCase().includes("cd")) {
@@ -216,10 +198,12 @@ export default function CatalogInterface() {
         return <BookOpen className="w-4 h-4" />
     }
 
-    // Renderização do componente
+    const handleUserResponse = () => {
+        handleSubmit(false)
+    }
+
     return (
         <div className="max-w-4xl mx-auto p-6 space-y-6">
-            {/* Card principal */}
             <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 justify-between">
@@ -227,7 +211,6 @@ export default function CatalogInterface() {
                             <BookOpen className="w-5 h-5" />
                             Sistema de Catalogação UNIMARC Otimizado
                         </div>
-                        {/* Botão de debug */}
                         <Button
                             variant="outline"
                             size="sm"
@@ -240,7 +223,7 @@ export default function CatalogInterface() {
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    {/* Painel de debug */}
+                    {/* Debug info */}
                     {debugMode && conversationState && (
                         <div className="bg-yellow-50 p-3 rounded text-xs">
                             <div>
@@ -258,7 +241,7 @@ export default function CatalogInterface() {
                         </div>
                     )}
 
-                    {/* Formulário inicial */}
+                    {/* Input inicial */}
                     {!conversationState && (
                         <div className="space-y-4">
                             <div>
@@ -298,7 +281,7 @@ export default function CatalogInterface() {
                         </div>
                     )}
 
-                    {/* Pergunta de campo */}
+                    {/* Pergunta de campo - AGORA USANDO QuestionDisplay */}
                     {response?.type === "field-question" && (
                         <div className="space-y-4">
                             {/* Substitua a linha abaixo pelo QuestionDisplay */}
@@ -317,7 +300,7 @@ export default function CatalogInterface() {
                         </div>
                     )}
 
-                    {/* Confirmação de registo */}
+                    {/* Registro completo */}
                     {response?.type === "record-complete" && (
                         <div className="space-y-4">
                             <div className="flex items-center gap-2 text-green-600">
@@ -344,7 +327,7 @@ export default function CatalogInterface() {
                         </div>
                     )}
 
-                    {/* Confirmação de gravação */}
+                    {/* Registro gravado */}
                     {response?.type === "record-saved" && (
                         <div className="space-y-4">
                             <div className="flex items-center gap-2 text-green-600">
@@ -357,7 +340,30 @@ export default function CatalogInterface() {
                         </div>
                     )}
 
-                    {/* Status atual */}
+                    {response?.type === "bulk-auto-filled" && (
+                        <Card className="p-4 bg-green-50 border border-green-200 text-green-800">
+                            <p>
+                                <strong>{response.message}</strong>
+                            </p>
+                            {response.filledFields && (
+                                <div className="mt-2 text-sm">
+                                    <p>Campos preenchidos automaticamente:</p>
+                                    <ul className="list-disc list-inside mt-1">
+                                        {Object.entries(response.filledFields).map(([field, value]) => (
+                                            <li key={field}>
+                                                <strong>{field}</strong>: {typeof value === "object" ? JSON.stringify(value) : String(value)}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                            <Button onClick={handleUserResponse} className="mt-4" disabled={loading}>
+                                Continuar
+                            </Button>
+                        </Card>
+                    )}
+
+                    {/* Estado atual */}
                     {conversationState && (
                         <div className="text-xs text-muted-foreground border-t pt-4">
                             <div>Etapa: {conversationState.step}</div>
@@ -383,10 +389,10 @@ export default function CatalogInterface() {
                                 <div
                                     key={index}
                                     className={`p-2 rounded text-sm ${entry.type === "user"
-                                        ? "bg-blue-50 border-l-2 border-blue-500"
-                                        : entry.type === "system"
-                                            ? "bg-gray-50 border-l-2 border-gray-500"
-                                            : "bg-red-50 border-l-2 border-red-500"
+                                            ? "bg-blue-50 border-l-2 border-blue-500"
+                                            : entry.type === "system"
+                                                ? "bg-gray-50 border-l-2 border-gray-500"
+                                                : "bg-red-50 border-l-2 border-red-500"
                                         }`}
                                 >
                                     <div className="flex items-center gap-2 mb-1">

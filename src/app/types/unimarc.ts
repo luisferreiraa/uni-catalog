@@ -62,7 +62,7 @@ export interface TemplatesResponse {
     templates: Template[]
 }
 
-export type ConversationStep = "template-selection" | "field-filling" | "confirmation" | "completed"
+export type ConversationStep = "template-selection" | "bulk-auto-fill" | "bulk-field-filling" | "field-filling" | "confirmation" | "completed"
 
 export interface ConversationState {
     step: ConversationStep
@@ -84,6 +84,7 @@ export interface CatalogRequest {
 export interface CatalogResponse {
     type:
     | "template-selected"
+    | "bulk-auto-filled"
     | "field-question"
     | "field-auto-filled"
     | "record-complete"
@@ -106,4 +107,5 @@ export interface CatalogResponse {
     tips?: string[]
     subfieldTips?: string[]
     textUnimarc?: string
+    filledFields?: Record<string, any> // Para mostrar campos preenchidos automaticamente
 }
