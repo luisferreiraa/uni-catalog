@@ -198,7 +198,7 @@ export default function HomePage() {
                         className="flex-1 bg-amber-500 hover:bg-amber-600"
                         disabled={loading}
                       >
-                        {loading ? "Processando..." : "Sim"}
+                        {loading ? "A processar..." : "Sim"}
                       </Button>
                       <Button
                         onClick={() => handleUserResponse("não")}
@@ -206,7 +206,7 @@ export default function HomePage() {
                         variant="outline"
                         disabled={loading}
                       >
-                        {loading ? "Processando..." : "Não"}
+                        {loading ? "A processar..." : "Não"}
                       </Button>
                     </div>
                   </Card>
@@ -223,7 +223,7 @@ export default function HomePage() {
                       {loading && (
                         <div className="flex items-center text-sm">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600 mr-2"></div>
-                          Analisando...
+                          A analisar...
                         </div>
                       )}
                     </div>

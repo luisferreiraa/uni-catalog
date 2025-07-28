@@ -326,7 +326,7 @@ export async function POST(req: NextRequest) {
 
                     // Verifica se o subcampo é repetível
                     if (currentSubfieldDef?.repeatable && !isRepeatingField && shouldStoreValue) {
-                        const confirmPrompt = `Você adicionou um valor para ${state.askedField}$${state.askedSubfield}. Deseja adicionar outro valor para este mesmo subcampo? (sim/não)`
+                        const confirmPrompt = `Adicionou um valor para ${state.askedField}$${state.askedSubfield}. Deseja adicionar outro valor para este mesmo subcampo? (sim/não)`
 
                         return NextResponse.json({
                             type: "repeat-confirmation",
@@ -351,7 +351,7 @@ export async function POST(req: NextRequest) {
                         // Verifica se o campo principal é repetível
                         if (dataFieldDef.repeatable && !isRepeatingField &&
                             Object.keys(state.filledFields[state.askedField] || {}).length > 0) {
-                            const confirmPrompt = `Você completou todos os subcampos de ${state.askedField}. Deseja adicionar outra ocorrência deste campo? (sim/não)`
+                            const confirmPrompt = `Completou todos os subcampos de ${state.askedField}. Deseja adicionar outra ocorrência deste campo? (sim/não)`
 
                             return NextResponse.json({
                                 type: "repeat-confirmation",
@@ -387,7 +387,7 @@ export async function POST(req: NextRequest) {
 
                     // Verifica se o campo é repetível
                     if (currentFieldDef?.repeatable && !isRepeatingField && shouldStoreValue) {
-                        const confirmPrompt = `Você adicionou um valor para ${state.askedField}. Deseja adicionar outro valor para este mesmo campo? (sim/não)`
+                        const confirmPrompt = `Adicionou um valor para ${state.askedField}. Deseja adicionar outro valor para este mesmo campo? (sim/não)`
 
                         return NextResponse.json({
                             type: "repeat-confirmation",
@@ -453,7 +453,7 @@ export async function POST(req: NextRequest) {
                 )
 
                 if (!currentFieldDef) {
-                    console.error(`Campo ${currentFieldTag} não encontrado na definição do template. Removendo.`)
+                    console.error(`Campo ${currentFieldTag} não encontrado na definição do template. A remover...`)
                     state.remainingFields.shift()
                     delete state.askedField
                     delete state.askedSubfield
@@ -691,7 +691,7 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                 const recordId = await databaseService.saveRecord({
                     templateId: state.currentTemplate.id,
                     templateName: state.currentTemplate.name,
-                    templateDesc: `Registro catalogado automaticamente - ${new Date().toLocaleDateString()}`,
+                    templateDesc: `Registo catalogado automaticamente - ${new Date().toLocaleDateString()}`,
                     filledFields: state.filledFields,
                     template: state.currentTemplate,
                     textUnimarc,
@@ -708,7 +708,7 @@ ${JSON.stringify(state.filledFields, null, 2)}`
 
                 return NextResponse.json({
                     type: "record-saved",
-                    message: `Registro gravado com sucesso! ID: ${recordId}. ${state.autoFilledCount || 0} campos preenchidos automaticamente.`,
+                    message: `Registo gravado com sucesso! ID: ${recordId}. ${state.autoFilledCount || 0} campos preenchidos automaticamente.`,
                     record: state.filledFields,
                     recordId,
                     textUnimarc,
@@ -718,11 +718,11 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                     },
                 } as CatalogResponse)
             } catch (error) {
-                console.error("Erro ao gravar registro:", error)
+                console.error("Erro ao gravar registo:", error)
                 return NextResponse.json(
                     {
                         type: "error",
-                        error: "Erro ao gravar registro na base de dados.",
+                        error: "Erro ao gravar registo na base de dados.",
                         details: error instanceof Error ? error.message : "Erro desconhecido",
                     } as CatalogResponse,
                     { status: 500 },
