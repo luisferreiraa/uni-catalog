@@ -13,10 +13,25 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 })
 
-function isValidFieldValue(value: any): boolean {
-    if (!value) return false;
-    if (typeof value === "string") return value.trim().length > 0 && !["n/a", "não se aplica"].includes(value.toLowerCase());
-    if (typeof value === "object") return Object.values(value).some(v => typeof v === "string" && v.trim() !== "");
+function isValidFieldValue(value: any, fieldDef?: any): boolean {
+    if (value === undefined || value === null) return false;
+
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed.length === 0) return false;
+        if (["n/a", "não se aplica", "não", "nao", "-", "none", "null"].includes(trimmed.toLowerCase())) {
+            return fieldDef?.mandatory; // Only accept if field is mandatory
+        }
+        return true;
+    }
+
+    if (typeof value === "object") {
+        return Object.values(value).some(v =>
+            typeof v === "string" && v.trim().length > 0 &&
+            !["n/a", "não se aplica", "não", "nao", "-", "none", "null"].includes(v.toLowerCase())
+        );
+    }
+
     return false;
 }
 
@@ -105,7 +120,6 @@ export async function POST(req: NextRequest) {
             console.log("Selected template ID:", selectedTemplate.id)
             console.log("Selected template name:", selectedTemplate.name)
 
-            // Avança para preenchimento automático em massa
             const response = {
                 type: "template-selected" as const,
                 conversationState: {
@@ -153,7 +167,6 @@ export async function POST(req: NextRequest) {
             console.log("Template has data fields:", state.currentTemplate.dataFields.length)
 
             try {
-                // Usa o prompt otimizado para preenchimento em massa
                 const { prompt, systemMessage, maxTokens, temperature, model } = promptOptimizer.buildPrompt(
                     "bulk-field-filling",
                     description,
@@ -176,7 +189,6 @@ export async function POST(req: NextRequest) {
                 const aiResponse = completion.choices[0]?.message?.content?.trim() || ""
                 console.log("AI Response for bulk filling:", aiResponse)
 
-                // Tenta fazer parse do JSON retornado pela OpenAI
                 let bulkFilledFields: Record<string, any> = {}
                 try {
                     const cleanResponse = aiResponse.replace(/```json\n?|\n?```/g, "").trim()
@@ -187,7 +199,6 @@ export async function POST(req: NextRequest) {
                     console.warn("Resposta original:", aiResponse)
                 }
 
-                // Valida e limpa os campos preenchidos
                 const validatedFields: Record<string, any> = {}
                 let autoFilledCount = 0
 
@@ -201,16 +212,29 @@ export async function POST(req: NextRequest) {
                         continue
                     }
 
-                    if (isValidFieldValue(value)) {
-                        validatedFields[tag] = value
-                        autoFilledCount++
+                    if (isValidFieldValue(value, fieldDef)) {
+                        if (typeof value === 'object') {
+                            // Filter out invalid subfields
+                            const filteredValue: Record<string, any> = {};
+                            for (const [subcode, subvalue] of Object.entries(value)) {
+                                if (isValidFieldValue(subvalue)) {
+                                    filteredValue[subcode] = subvalue;
+                                }
+                            }
+                            if (Object.keys(filteredValue).length > 0) {
+                                validatedFields[tag] = filteredValue;
+                                autoFilledCount++;
+                            }
+                        } else {
+                            validatedFields[tag] = value;
+                            autoFilledCount++;
+                        }
                         console.log(`Campo ${tag} preenchido automaticamente:`, value)
                     } else {
                         console.log(`Campo ${tag} com valor inválido, será perguntado ao utilizador:`, value)
                     }
                 }
 
-                // Determina quais campos ainda precisam ser preenchidos
                 const allTemplateFields = fieldInference.getAllTemplateFields(state.currentTemplate)
                 const remainingFields = allTemplateFields.filter((field) => !(field in validatedFields))
 
@@ -218,7 +242,6 @@ export async function POST(req: NextRequest) {
                 console.log("Campos preenchidos automaticamente:", Object.keys(validatedFields))
                 console.log("Campos restantes para perguntar:", remainingFields)
 
-                // Atualiza o estado
                 state.filledFields = validatedFields
                 state.remainingFields = remainingFields
                 state.autoFilledCount = autoFilledCount
@@ -270,8 +293,9 @@ export async function POST(req: NextRequest) {
                     (f) => f.tag === state.askedField,
                 )
 
-                // Verifica se é um campo repetível que está sendo repetido
                 const isRepeatingField = state.repeatingField === true;
+                const trimmedResponse = typeof userResponse === 'string' ? userResponse.trim() : '';
+                const shouldStoreValue = isValidFieldValue(trimmedResponse, currentFieldDef);
 
                 if (
                     currentFieldDef &&
@@ -281,34 +305,27 @@ export async function POST(req: NextRequest) {
                 ) {
                     // É um campo de dados com subcampos
                     const dataFieldDef = currentFieldDef as DataField
-
-                    // Encontra a definição do subcampo atual
                     const currentSubfieldDef = dataFieldDef.subFieldDef.find(
                         (sf) => sf.code === state.askedSubfield
                     )
 
-                    // Processa resposta para subcampo
-                    const trimmedResponse = userResponse.trim()
-
-                    // Se o campo não é obrigatório e a resposta está vazia, não armazena
-                    if ((currentSubfieldDef?.mandatory !== true && trimmedResponse === "") ||
-                        (currentSubfieldDef?.mandatory === true && !isValidFieldValue(trimmedResponse))) {
+                    if (!shouldStoreValue) {
                         // Remove o valor se existir
                         if (state.filledFields[state.askedField]?.[state.askedSubfield!] !== undefined) {
-                            delete state.filledFields[state.askedField][state.askedSubfield!]
+                            delete state.filledFields[state.askedField][state.askedSubfield!];
                         }
-                        console.log(`Subcampo ${state.askedField}$${state.askedSubfield} deixado em branco (não obrigatório)`)
+                        console.log(`Subcampo ${state.askedField}$${state.askedSubfield} deixado em branco`);
                     } else {
                         // Armazena o valor válido
                         if (!state.filledFields[state.askedField]) {
-                            state.filledFields[state.askedField] = {}
+                            state.filledFields[state.askedField] = {};
                         }
-                        state.filledFields[state.askedField][state.askedSubfield!] = trimmedResponse
-                        console.log(`User response for ${state.askedField}$${state.askedSubfield}: ${trimmedResponse}`)
+                        state.filledFields[state.askedField][state.askedSubfield!] = trimmedResponse;
+                        console.log(`User response for ${state.askedField}$${state.askedSubfield}: ${trimmedResponse}`);
                     }
 
-                    // Verifica se o subcampo é repetível e se o usuário quer adicionar outro
-                    if (currentSubfieldDef?.repeatable && !isRepeatingField && isValidFieldValue(trimmedResponse)) {
+                    // Verifica se o subcampo é repetível
+                    if (currentSubfieldDef?.repeatable && !isRepeatingField && shouldStoreValue) {
                         const confirmPrompt = `Você adicionou um valor para ${state.askedField}$${state.askedSubfield}. Deseja adicionar outro valor para este mesmo subcampo? (sim/não)`
 
                         return NextResponse.json({
@@ -318,7 +335,7 @@ export async function POST(req: NextRequest) {
                             question: confirmPrompt,
                             conversationState: {
                                 ...state,
-                                repeatingField: true // Marca que está no modo de repetição
+                                repeatingField: true
                             }
                         } as CatalogResponse)
                     }
@@ -329,7 +346,7 @@ export async function POST(req: NextRequest) {
 
                     if (nextSubfieldIdx < dataFieldDef.subFieldDef.length) {
                         state.askedSubfield = dataFieldDef.subFieldDef[nextSubfieldIdx].code
-                        state.repeatingField = false // Reseta o flag de repetição
+                        state.repeatingField = false
                     } else {
                         // Verifica se o campo principal é repetível
                         if (dataFieldDef.repeatable && !isRepeatingField &&
@@ -342,7 +359,7 @@ export async function POST(req: NextRequest) {
                                 question: confirmPrompt,
                                 conversationState: {
                                     ...state,
-                                    repeatingField: true // Marca que está no modo de repetição
+                                    repeatingField: true
                                 }
                             } as CatalogResponse)
                         }
@@ -360,21 +377,16 @@ export async function POST(req: NextRequest) {
                     }
                 } else {
                     // Campo simples (sem subcampos)
-                    const trimmedResponse = userResponse.trim()
-
-                    // Se o campo não é obrigatório e a resposta está vazia, não armazena
-                    if ((currentFieldDef?.mandatory !== true && trimmedResponse === "") ||
-                        (currentFieldDef?.mandatory === true && !isValidFieldValue(trimmedResponse))) {
+                    if (!shouldStoreValue) {
                         delete state.filledFields[state.askedField]
-                        console.log(`Campo ${state.askedField} deixado em branco (não obrigatório)`)
+                        console.log(`Campo ${state.askedField} deixado em branco`);
                     } else {
-                        // Armazena o valor válido
                         state.filledFields[state.askedField] = trimmedResponse
                         console.log(`Field ${currentFieldDef?.tag} filled: ${trimmedResponse}`)
                     }
 
-                    // Verifica se o campo é repetível e se o usuário quer adicionar outro
-                    if (currentFieldDef?.repeatable && !isRepeatingField && isValidFieldValue(trimmedResponse)) {
+                    // Verifica se o campo é repetível
+                    if (currentFieldDef?.repeatable && !isRepeatingField && shouldStoreValue) {
                         const confirmPrompt = `Você adicionou um valor para ${state.askedField}. Deseja adicionar outro valor para este mesmo campo? (sim/não)`
 
                         return NextResponse.json({
@@ -383,7 +395,7 @@ export async function POST(req: NextRequest) {
                             question: confirmPrompt,
                             conversationState: {
                                 ...state,
-                                repeatingField: true // Marca que está no modo de repetição
+                                repeatingField: true
                             }
                         } as CatalogResponse)
                     }
@@ -401,18 +413,15 @@ export async function POST(req: NextRequest) {
                 const wantsToRepeat = userResponse.trim().toLowerCase() === 'sim'
 
                 if (wantsToRepeat) {
-                    // Mantém o mesmo campo/subcampo para nova entrada
                     console.log(`User wants to repeat ${state.askedField}${state.askedSubfield ? '$' + state.askedSubfield : ''}`)
                     delete state.repeatConfirmation
                     state.repeatingField = true
                 } else {
-                    // Prossegue para o próximo campo/subcampo
                     console.log(`User does not want to repeat ${state.askedField}${state.askedSubfield ? '$' + state.askedSubfield : ''}`)
                     delete state.repeatConfirmation
                     delete state.repeatingField
 
                     if (state.askedSubfield) {
-                        // Avança para o próximo subcampo ou campo
                         const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
                             (f) => f.tag === state.askedField,
                         ) as DataField | undefined
@@ -530,7 +539,7 @@ export async function POST(req: NextRequest) {
                         ...state,
                         askedField: currentFieldTag,
                         askedSubfield: subfieldToAskCode,
-                        repeatingField: false // Reseta o flag ao perguntar um novo campo
+                        repeatingField: false
                     },
                 } as CatalogResponse)
             }
@@ -578,38 +587,25 @@ export async function POST(req: NextRequest) {
                 // Converte campos para formato UNIMARC utilizando OpenAI
                 console.log("Converting filled fields to UNIMARC text format...")
                 const unimarcConversionPrompt = `Converta o seguinte objeto JSON de campos UNIMARC para o formato de texto UNIMARC.
-Siga estas regras estritas para CADA campo:
-1.  **Tag do Campo**: Comece com a tag do campo (ex: "001", "200").
-2.  **Indicadores**: Para campos de dados (tags 1xx-9xx), adicione DOIS espaços para os indicadores. Se o JSON contiver indicadores específicos para esse campo, use-os. Caso contrário, use dois espaços em branco ('  ').
-3.  **Subcampos**: Use o delimitador '$' seguido do código do subcampo (ex: '$a', '$b').
-4.  **Valores Simples (para campos de controlo ou dados sem subcampos explícitos)**: Se o valor do campo no JSON for uma string simples (ex: "UNIMARC123"), inclua-o diretamente após a tag (e indicadores, se aplicável).
-5.  **Valores Objeto (para campos de dados com subcampos)**: Se o valor do campo no JSON for um objeto (ex: {"a": "Memorial do convento", "e": "romance"}), cada chave do objeto é um código de subcampo e o seu valor é o conteúdo do subcampo. **Inclua TODOS os subcampos e seus valores, mesmo que um subcampo específico esteja vazio.**
-6.  **Valores Vazios/Não Aplicáveis**: Se o valor de um campo no JSON for uma string VAZIA, NULA, ou uma string que representa "não aplicável" (ex: "N/A", "Não se aplica"), ou uma explicação (ex: "Para incluir o INTERNATIONAL ARTICLE NUMBER..."), então represente-o como um subcampo principal vazio (ex: '$a'). NÃO inclua o texto da explicação ou qualquer texto não-UNIMARC no output.
-7.  **Nova Linha**: Cada campo DEVE estar numa nova linha.
-8.  **Sem Texto Adicional**: NÃO inclua qualquer texto adicional, introduções, conclusões, ou qualquer coisa que não seja o formato UNIMARC puro.
+Regras estritas:
+1. Ignore completamente qualquer subcampo com valor "não", "nao", "n/a" ou string vazia
+2. Inclua apenas subcampos com valores válidos
+3. Campos obrigatórios sem valor válido devem ser representados com $a vazio
+4. Nunca inclua o texto "não" como valor
+5. Formato exato:
+   - Campos de controle: "001 valor"
+   - Campos de dados: "200  \$aTítulo\$bSubtítulo"
 
-**Exemplo de Conversão:**
-JSON de entrada:
-\`\`\`json
+Exemplo:
 {
-  "200": {
-    "a": "Título Principal",
-    "b": "Subtítulo",
-    "f": "Autor"
-  },
-  "001": "ID_DO_REGISTRO",
-  "101": {
-    "a": "por",
-    "c": "eng"
-  }
+  "001": "12345",
+  "200": {"a": "Título", "b": "não"},  // Ignorar $b
+  "101": {"a": "por", "c": "não"}       // Ignorar $c
 }
-\`\`\`
-Saída UNIMARC esperada:
-\`\`\`
-001 ID_DO_REGISTRO
-101  $apor$ceng
-200  $aTítulo Principal$bSubtítulo$fAutor
-\`\`\`
+Saída:
+001 12345
+200  \$aTítulo
+101  \$apor
 
 Objeto JSON a converter:
 ${JSON.stringify(state.filledFields, null, 2)}`
@@ -619,8 +615,7 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                     messages: [
                         {
                             role: "system",
-                            content:
-                                "Você é um especialista em UNIMARC. Converta o JSON fornecido para o formato de texto UNIMARC EXATO, seguindo as regras estritas. Inclua TODOS os valores válidos. Não inclua introduções, conclusões ou qualquer texto que não seja o UNIMARC puro. Se um valor for inválido ou uma explicação, use um subcampo principal vazio ('$a').",
+                            content: "Você é um especialista em UNIMARC. Converta o JSON fornecido para o formato de texto UNIMARC EXATO, seguindo as regras estritas. Ignore valores inválidos como 'não' ou vazios.",
                         },
                         { role: "user", content: unimarcConversionPrompt },
                     ],
@@ -632,7 +627,14 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                 console.log("Generated UNIMARC text:", textUnimarc)
 
                 // Prepara dados para persistência
-                const fieldsToSave = Object.entries(state.filledFields).map(([tag, value]) => {
+                const fieldsToSave: Array<{
+                    tag: string;
+                    value: string | null;
+                    subfields?: Prisma.JsonValue;
+                    fieldType: FieldType;
+                    fieldName: string | null;
+                    subfieldNames?: Prisma.JsonValue;
+                }> = Object.entries(state.filledFields).map(([tag, value]) => {
                     let fieldDef
                     if (state.currentTemplate) {
                         fieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
@@ -650,15 +652,22 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                     let subfieldValues: Prisma.JsonValue | undefined
 
                     if (fieldType === FieldType.DATA && typeof value === "object" && value !== null) {
-                        subfieldValues = value as Prisma.JsonValue
-                        const dataFieldDef = fieldDef as DataField
-                        subfieldNames = {}
+                        // Filter out invalid subfields before saving
+                        const filteredSubfields: Record<string, any> = {};
+                        for (const [subcode, subvalue] of Object.entries(value)) {
+                            if (isValidFieldValue(subvalue)) {
+                                filteredSubfields[subcode] = subvalue;
+                            }
+                        }
+                        subfieldValues = filteredSubfields as Prisma.JsonValue;
+                        const dataFieldDef = fieldDef as DataField;
+                        subfieldNames = {};
                         dataFieldDef.subFieldDef.forEach((sf) => {
-                            const sfTranslation = sf.translations?.find((t) => t.language === language)
-                                ; (subfieldNames as Record<string, string>)[sf.code] = sfTranslation?.label || sf.code
-                        })
+                            const sfTranslation = sf.translations?.find((t) => t.language === language);
+                            (subfieldNames as Record<string, string>)[sf.code] = sfTranslation?.label || sf.code;
+                        });
                     } else {
-                        fieldValue = value ? String(value) : null
+                        fieldValue = isValidFieldValue(value) ? String(value) : null;
                     }
 
                     return {
@@ -669,7 +678,13 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                         fieldName: fieldName || null,
                         subfieldNames,
                     }
-                })
+                }).filter(field =>
+                    // Remove campos vazios
+                    field.value !== null ||
+                    (field.subfields && Object.keys(field.subfields as object).length > 0)
+                );
+
+                console.log("Fields to save:", fieldsToSave);
 
                 // Persiste na base de dados
                 console.log("Saving record to database...")
