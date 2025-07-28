@@ -13,30 +13,11 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 })
 
-function isValidFieldValue(value: any, tag: string): boolean {
-    if (!value) return false
-
-    if (typeof value === "string") {
-        const trimmed = value.trim()
-        if (trimmed.length === 0) return false
-        if (trimmed.toLowerCase() === "n/a") return false
-        if (trimmed.toLowerCase() === "não se aplica") return false
-        if (trimmed.includes("não foi possível")) return false
-        return true
-    }
-
-    if (typeof value === "object") {
-        // Para objetos (subcampos), verifica se pelo menos um subcampo tem valor válido
-        return Object.values(value).some(
-            (subValue) =>
-                subValue &&
-                typeof subValue === "string" &&
-                subValue.trim().length > 0 &&
-                !subValue.toLowerCase().includes("n/a"),
-        )
-    }
-
-    return false
+function isValidFieldValue(value: any): boolean {
+    if (!value) return false;
+    if (typeof value === "string") return value.trim().length > 0 && !["n/a", "não se aplica"].includes(value.toLowerCase());
+    if (typeof value === "object") return Object.values(value).some(v => typeof v === "string" && v.trim() !== "");
+    return false;
 }
 
 export async function POST(req: NextRequest) {
@@ -66,6 +47,8 @@ export async function POST(req: NextRequest) {
                 filledFields: {},
                 remainingFields: [],
                 autoFilledCount: 0,
+                repeatingField: false,
+                repeatConfirmation: undefined,
             }
 
         console.log("Current state (processed):", state.step)
@@ -131,6 +114,8 @@ export async function POST(req: NextRequest) {
                     filledFields: {},
                     remainingFields: [],
                     autoFilledCount: 0,
+                    repeatingField: false,
+                    repeatConfirmation: undefined,
                 },
                 template: {
                     id: selectedTemplate.id,
@@ -194,14 +179,12 @@ export async function POST(req: NextRequest) {
                 // Tenta fazer parse do JSON retornado pela OpenAI
                 let bulkFilledFields: Record<string, any> = {}
                 try {
-                    // Remove possíveis marcadores de código se existirem
                     const cleanResponse = aiResponse.replace(/```json\n?|\n?```/g, "").trim()
                     bulkFilledFields = JSON.parse(cleanResponse)
                     console.log("Parsed bulk filled fields:", bulkFilledFields)
                 } catch (parseError) {
                     console.warn("Erro ao fazer parse do JSON da OpenAI:", parseError)
                     console.warn("Resposta original:", aiResponse)
-                    // Se falhar o parse, continua com objeto vazio
                 }
 
                 // Valida e limpa os campos preenchidos
@@ -209,7 +192,6 @@ export async function POST(req: NextRequest) {
                 let autoFilledCount = 0
 
                 for (const [tag, value] of Object.entries(bulkFilledFields)) {
-                    // Verifica se o campo existe no template
                     const fieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
                         (f) => f.tag === tag,
                     )
@@ -219,8 +201,7 @@ export async function POST(req: NextRequest) {
                         continue
                     }
 
-                    // Valida o valor
-                    if (isValidFieldValue(value, tag)) {
+                    if (isValidFieldValue(value)) {
                         validatedFields[tag] = value
                         autoFilledCount++
                         console.log(`Campo ${tag} preenchido automaticamente:`, value)
@@ -243,7 +224,6 @@ export async function POST(req: NextRequest) {
                 state.autoFilledCount = autoFilledCount
                 state.step = "field-filling"
 
-                // Se conseguiu preencher alguns campos, mostra o resultado
                 if (autoFilledCount > 0) {
                     console.log("=== RETURNING BULK AUTO-FILLED RESPONSE ===")
                     return NextResponse.json({
@@ -254,13 +234,10 @@ export async function POST(req: NextRequest) {
                     } as CatalogResponse)
                 } else {
                     console.log("=== NO FIELDS AUTO-FILLED, CONTINUING TO MANUAL FILLING ===")
-                    // Se não conseguiu preencher nenhum campo, vai direto para as perguntas
                     state.step = "field-filling"
-                    // Continua para a próxima etapa (field-filling)
                 }
             } catch (error) {
                 console.error("Erro no preenchimento automático em massa:", error)
-                // Em caso de erro, continua com preenchimento manual
                 const allTemplateFields = fieldInference.getAllTemplateFields(state.currentTemplate)
                 state.remainingFields = allTemplateFields
                 state.step = "field-filling"
@@ -293,6 +270,9 @@ export async function POST(req: NextRequest) {
                     (f) => f.tag === state.askedField,
                 )
 
+                // Verifica se é um campo repetível que está sendo repetido
+                const isRepeatingField = state.repeatingField === true;
+
                 if (
                     currentFieldDef &&
                     "subFieldDef" in currentFieldDef &&
@@ -302,31 +282,157 @@ export async function POST(req: NextRequest) {
                     // É um campo de dados com subcampos
                     const dataFieldDef = currentFieldDef as DataField
 
-                    if (!state.filledFields[state.askedField]) {
-                        state.filledFields[state.askedField] = {}
+                    // Encontra a definição do subcampo atual
+                    const currentSubfieldDef = dataFieldDef.subFieldDef.find(
+                        (sf) => sf.code === state.askedSubfield
+                    )
+
+                    // Processa resposta para subcampo
+                    const trimmedResponse = userResponse.trim()
+
+                    // Se o campo não é obrigatório e a resposta está vazia, não armazena
+                    if ((currentSubfieldDef?.mandatory !== true && trimmedResponse === "") ||
+                        (currentSubfieldDef?.mandatory === true && !isValidFieldValue(trimmedResponse))) {
+                        // Remove o valor se existir
+                        if (state.filledFields[state.askedField]?.[state.askedSubfield!] !== undefined) {
+                            delete state.filledFields[state.askedField][state.askedSubfield!]
+                        }
+                        console.log(`Subcampo ${state.askedField}$${state.askedSubfield} deixado em branco (não obrigatório)`)
+                    } else {
+                        // Armazena o valor válido
+                        if (!state.filledFields[state.askedField]) {
+                            state.filledFields[state.askedField] = {}
+                        }
+                        state.filledFields[state.askedField][state.askedSubfield!] = trimmedResponse
+                        console.log(`User response for ${state.askedField}$${state.askedSubfield}: ${trimmedResponse}`)
                     }
 
-                    state.filledFields[state.askedField][state.askedSubfield!] = userResponse.trim()
-                    console.log(`User response for ${state.askedField}$${state.askedSubfield}: ${userResponse}`)
+                    // Verifica se o subcampo é repetível e se o usuário quer adicionar outro
+                    if (currentSubfieldDef?.repeatable && !isRepeatingField && isValidFieldValue(trimmedResponse)) {
+                        const confirmPrompt = `Você adicionou um valor para ${state.askedField}$${state.askedSubfield}. Deseja adicionar outro valor para este mesmo subcampo? (sim/não)`
 
+                        return NextResponse.json({
+                            type: "repeat-confirmation",
+                            field: state.askedField,
+                            subfield: state.askedSubfield,
+                            question: confirmPrompt,
+                            conversationState: {
+                                ...state,
+                                repeatingField: true // Marca que está no modo de repetição
+                            }
+                        } as CatalogResponse)
+                    }
+
+                    // Avança para o próximo subcampo ou campo
                     const currentSubfieldIdx = dataFieldDef.subFieldDef.findIndex((sf) => sf.code === state.askedSubfield)
                     const nextSubfieldIdx = currentSubfieldIdx + 1
 
                     if (nextSubfieldIdx < dataFieldDef.subFieldDef.length) {
                         state.askedSubfield = dataFieldDef.subFieldDef[nextSubfieldIdx].code
+                        state.repeatingField = false // Reseta o flag de repetição
                     } else {
+                        // Verifica se o campo principal é repetível
+                        if (dataFieldDef.repeatable && !isRepeatingField &&
+                            Object.keys(state.filledFields[state.askedField] || {}).length > 0) {
+                            const confirmPrompt = `Você completou todos os subcampos de ${state.askedField}. Deseja adicionar outra ocorrência deste campo? (sim/não)`
+
+                            return NextResponse.json({
+                                type: "repeat-confirmation",
+                                field: state.askedField,
+                                question: confirmPrompt,
+                                conversationState: {
+                                    ...state,
+                                    repeatingField: true // Marca que está no modo de repetição
+                                }
+                            } as CatalogResponse)
+                        }
+
+                        // Remove o campo se não tiver subcampos válidos
+                        if (Object.keys(state.filledFields[state.askedField] || {}).length === 0) {
+                            delete state.filledFields[state.askedField]
+                        }
+
                         state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
                         delete state.askedField
                         delete state.askedSubfield
+                        delete state.repeatingField
                         console.log(`All subfields for ${dataFieldDef.tag} filled. Remaining main fields:`, state.remainingFields)
                     }
                 } else {
-                    // Campo simples
-                    state.filledFields[state.askedField] = userResponse.trim()
+                    // Campo simples (sem subcampos)
+                    const trimmedResponse = userResponse.trim()
+
+                    // Se o campo não é obrigatório e a resposta está vazia, não armazena
+                    if ((currentFieldDef?.mandatory !== true && trimmedResponse === "") ||
+                        (currentFieldDef?.mandatory === true && !isValidFieldValue(trimmedResponse))) {
+                        delete state.filledFields[state.askedField]
+                        console.log(`Campo ${state.askedField} deixado em branco (não obrigatório)`)
+                    } else {
+                        // Armazena o valor válido
+                        state.filledFields[state.askedField] = trimmedResponse
+                        console.log(`Field ${currentFieldDef?.tag} filled: ${trimmedResponse}`)
+                    }
+
+                    // Verifica se o campo é repetível e se o usuário quer adicionar outro
+                    if (currentFieldDef?.repeatable && !isRepeatingField && isValidFieldValue(trimmedResponse)) {
+                        const confirmPrompt = `Você adicionou um valor para ${state.askedField}. Deseja adicionar outro valor para este mesmo campo? (sim/não)`
+
+                        return NextResponse.json({
+                            type: "repeat-confirmation",
+                            field: state.askedField,
+                            question: confirmPrompt,
+                            conversationState: {
+                                ...state,
+                                repeatingField: true // Marca que está no modo de repetição
+                            }
+                        } as CatalogResponse)
+                    }
+
                     state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
                     delete state.askedField
                     delete state.askedSubfield
-                    console.log(`Field ${currentFieldDef?.tag} filled. Remaining main fields:`, state.remainingFields)
+                    delete state.repeatingField
+                    console.log(`Field ${currentFieldDef?.tag} processed. Remaining main fields:`, state.remainingFields)
+                }
+            }
+
+            // Processa confirmação de repetição (se existir)
+            if (state.repeatConfirmation !== undefined && userResponse !== undefined && userResponse !== null) {
+                const wantsToRepeat = userResponse.trim().toLowerCase() === 'sim'
+
+                if (wantsToRepeat) {
+                    // Mantém o mesmo campo/subcampo para nova entrada
+                    console.log(`User wants to repeat ${state.askedField}${state.askedSubfield ? '$' + state.askedSubfield : ''}`)
+                    delete state.repeatConfirmation
+                    state.repeatingField = true
+                } else {
+                    // Prossegue para o próximo campo/subcampo
+                    console.log(`User does not want to repeat ${state.askedField}${state.askedSubfield ? '$' + state.askedSubfield : ''}`)
+                    delete state.repeatConfirmation
+                    delete state.repeatingField
+
+                    if (state.askedSubfield) {
+                        // Avança para o próximo subcampo ou campo
+                        const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
+                            (f) => f.tag === state.askedField,
+                        ) as DataField | undefined
+
+                        if (currentFieldDef) {
+                            const currentSubfieldIdx = currentFieldDef.subFieldDef.findIndex((sf) => sf.code === state.askedSubfield)
+                            const nextSubfieldIdx = currentSubfieldIdx + 1
+
+                            if (nextSubfieldIdx < currentFieldDef.subFieldDef.length) {
+                                state.askedSubfield = currentFieldDef.subFieldDef[nextSubfieldIdx].code
+                            } else {
+                                state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
+                                delete state.askedField
+                                delete state.askedSubfield
+                            }
+                        }
+                    } else {
+                        state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
+                        delete state.askedField
+                    }
                 }
             }
 
@@ -368,7 +474,7 @@ export async function POST(req: NextRequest) {
                     subfieldToAskCode = undefined
                 }
 
-                // Constrói a pergunta
+                // Constrói a pergunta com indicação de obrigatoriedade
                 const fieldTranslation = currentFieldDef.translations.find((t) => t.language === language)
                 const fieldName = fieldTranslation?.name || currentFieldTag
                 const tips = fieldTranslation?.tips ?? []
@@ -387,9 +493,24 @@ export async function POST(req: NextRequest) {
                     } else {
                         subfieldNameForResponse = subfieldToAskCode
                     }
-                    questionText += ` - ${subfieldPart}`
+
+                    // Adiciona indicação de obrigatoriedade
+                    const mandatoryText = subfieldToAskDef?.mandatory ? " (obrigatório)" : " (opcional)"
+                    questionText += ` - ${subfieldPart}${mandatoryText}`
+
                     subfieldTips = subfieldTranslation?.tips ?? []
+                    if (!subfieldToAskDef?.mandatory) {
+                        subfieldTips.unshift("Pode deixar em branco se não se aplicar")
+                    }
+                } else {
+                    // Adiciona indicação de obrigatoriedade para campo simples
+                    const mandatoryText = currentFieldDef.mandatory ? " (obrigatório)" : " (opcional)"
+                    questionText += mandatoryText
+                    if (!currentFieldDef.mandatory) {
+                        tips.unshift("Pode deixar em branco se não se aplicar")
+                    }
                 }
+
                 questionText += `.${tipsText}`
 
                 console.log("=== ASKING USER FOR FIELD ===")
@@ -409,6 +530,7 @@ export async function POST(req: NextRequest) {
                         ...state,
                         askedField: currentFieldTag,
                         askedSubfield: subfieldToAskCode,
+                        repeatingField: false // Reseta o flag ao perguntar um novo campo
                     },
                 } as CatalogResponse)
             }

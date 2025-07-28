@@ -17,6 +17,7 @@ export interface SaveRecordData {
         fieldType: FieldType
         fieldName?: string | null
         subfieldNames?: JsonValue
+        isRepeatable?: boolean
     }[]
 }
 
@@ -26,10 +27,10 @@ export class DatabaseService {
      */
     async saveRecord(data: SaveRecordData): Promise<string> {
         try {
-            const { templateId, templateName, templateDesc, textUnimarc } = data;
+            const { templateId, templateName, templateDesc, textUnimarc, template } = data;
 
             // Prepara os campos no formato que o Prisma espera
-            const fieldsInput = this.prepareFieldsForPrisma(data.fields);
+            const fieldsInput = this.prepareFieldsForPrisma(data.fields, template);
 
             // Cria o registro principal
             const catalogRecord = await prisma.catalogRecord.create({
@@ -54,15 +55,28 @@ export class DatabaseService {
         }
     }
 
-    private prepareFieldsForPrisma(fields: SaveRecordData['fields']): Prisma.CatalogFieldCreateWithoutRecordInput[] {
-        return fields.map(field => ({
-            tag: field.tag,
-            value: field.value ?? '',
-            subfields: field.subfields ?? Prisma.JsonNull,
-            fieldType: field.fieldType,
-            fieldName: field.fieldName ?? null,
-            subfieldNames: field.subfieldNames ?? Prisma.JsonNull
-        }));
+    private prepareFieldsForPrisma(
+        fields: SaveRecordData['fields'],
+        template: Template
+    ): Prisma.CatalogFieldCreateWithoutRecordInput[] {
+        return fields.map(field => {
+            // Encontra a definição do campo no template para obter informações adicionais
+            const fieldDef = [
+                ...template.controlFields,
+                ...template.dataFields
+            ].find(f => f.tag === field.tag);
+
+            return {
+                tag: field.tag,
+                value: field.value ?? '',
+                subfields: field.subfields ?? Prisma.JsonNull,
+                fieldType: field.fieldType,
+                fieldName: field.fieldName ?? null,
+                subfieldNames: field.subfieldNames ?? Prisma.JsonNull,
+                isRepeatable: fieldDef?.repeatable || false, // Adiciona informação de repetibilidade
+                isMandatory: fieldDef?.mandatory || false    // Adiciona informação de obrigatoriedade
+            };
+        });
     }
 
 
@@ -70,12 +84,12 @@ export class DatabaseService {
      * Prepara os campos para inserção na base de dados
      */
     private prepareFields(filledFields: Record<string, any>, template: Template) {
-        const fieldsToCreate = []
+        const fieldsToCreate = [];
 
         for (const [tag, value] of Object.entries(filledFields)) {
             // Encontra o campo no template
-            const controlField = template.controlFields.find((f) => f.tag === tag)
-            const dataField = template.dataFields.find((f) => f.tag === tag)
+            const controlField = template.controlFields.find((f) => f.tag === tag);
+            const dataField = template.dataFields.find((f) => f.tag === tag);
 
             if (controlField) {
                 // Campo de controle
@@ -84,52 +98,67 @@ export class DatabaseService {
                     value: String(value),
                     subfields: {},
                     fieldType: "CONTROL" as const,
-                })
+                    isRepeatable: controlField.repeatable || false,
+                    isMandatory: controlField.mandatory || false
+                });
             } else if (dataField) {
                 // Campo de dados - pode ter subcampos
-                const subfields = this.parseSubfields(value, dataField)
+                const subfields = this.parseSubfields(value, dataField);
 
                 fieldsToCreate.push({
                     tag,
                     value: String(value),
                     subfields,
                     fieldType: "DATA" as const,
-                })
+                    isRepeatable: dataField.repeatable || false,
+                    isMandatory: dataField.mandatory || false
+                });
             }
         }
 
-        return fieldsToCreate
+        return fieldsToCreate;
     }
 
     /**
      * Analisa e estrutura subcampos para campos de dados
      */
-    private parseSubfields(value: any, dataField: DataField): Record<string, string> {
-        const subfields: Record<string, string> = {}
+    private parseSubfields(value: any, dataField: DataField): Record<string, any> {
+        // Se o valor é um array, significa que temos múltiplas ocorrências
+        if (Array.isArray(value)) {
+            return {
+                occurrences: value.map(v => this.parseSingleSubfield(v, dataField))
+            };
+        }
+
+        return this.parseSingleSubfield(value, dataField);
+    }
+
+    private parseSingleSubfield(value: any, dataField: DataField): Record<string, string> {
+        const subfields: Record<string, string> = {};
 
         // Se o valor é uma string simples, coloca no subcampo 'a' (principal)
         if (typeof value === "string") {
-            subfields.a = value
-            return subfields
+            subfields.a = value;
+            return subfields;
         }
 
         // Se o valor já é um objeto com subcampos
         if (typeof value === "object" && value !== null) {
             // Valida se os subcampos existem na definição
             for (const [code, subfieldValue] of Object.entries(value)) {
-                const subfieldDef = dataField.subFieldDef.find((sf) => sf.code === code)
+                const subfieldDef = dataField.subFieldDef.find((sf) => sf.code === code);
                 if (subfieldDef && typeof subfieldValue === "string") {
-                    subfields[code] = subfieldValue
+                    subfields[code] = subfieldValue;
                 }
             }
         }
 
         // Se não há subcampos válidos, coloca no 'a'
         if (Object.keys(subfields).length === 0) {
-            subfields.a = String(value)
+            subfields.a = String(value);
         }
 
-        return subfields
+        return subfields;
     }
 
     /**

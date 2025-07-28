@@ -32,8 +32,12 @@ model CatalogField {
   fieldType     FieldType
   fieldName     String?
   subfieldNames Json?
+  isRepeatable  Boolean       @default(false)
+  isMandatory   Boolean       @default(false)
   recordId      String
   record        CatalogRecord @relation(fields: [recordId], references: [id])
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   @@index([recordId])
 }

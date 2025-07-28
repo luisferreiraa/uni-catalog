@@ -72,6 +72,11 @@ export interface ConversationState {
     askedField?: string
     askedSubfield?: string
     autoFilledCount?: number
+    repeatingField?: boolean
+    repeatConfirmation?: {
+        field: string
+        subfield?: string
+    }
 }
 
 export interface CatalogRequest {
@@ -91,6 +96,7 @@ export interface CatalogResponse {
     | "record-saved"
     | "template-not-found"
     | "error"
+    | "repeat-confirmation"
     conversationState?: ConversationState
     template?: { id: string; name: string; description?: string }
     field?: string
@@ -107,5 +113,5 @@ export interface CatalogResponse {
     tips?: string[]
     subfieldTips?: string[]
     textUnimarc?: string
-    filledFields?: Record<string, any> // Para mostrar campos preenchidos automaticamente
+    filledFields?: Record<string, any>
 }

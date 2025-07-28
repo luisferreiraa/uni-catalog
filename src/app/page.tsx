@@ -32,10 +32,12 @@ export default function HomePage() {
       return
     }
 
-    // Auto-continuar para estes tipos de resposta
-    const shouldAutoContinue = ["template-selected", "bulk-auto-filled", "field-auto-filled"].includes(
-      currentResponse.type,
-    )
+    // Auto-continuar apenas para estes tipos de resposta
+    const shouldAutoContinue = [
+      "template-selected",
+      "bulk-auto-filled",
+      "field-auto-filled"
+    ].includes(currentResponse.type)
 
     if (shouldAutoContinue) {
       console.log(`useEffect: Auto-continuing for ${currentResponse.type}`)
@@ -74,17 +76,15 @@ export default function HomePage() {
     }
   }
 
-  const handleUserResponse = async () => {
-    console.log("handleUserResponse called")
-    console.log("Current conversationState:", conversationState)
-    console.log("User response:", userResponse)
+  const handleUserResponse = async (directResponse?: string) => {
+    console.log("handleUserResponse called with:", directResponse || userResponse)
 
     setLoading(true)
     try {
       const payload = {
-        description, // Mantém a descrição original
+        description,
         conversationState,
-        userResponse: userResponse || undefined, // Só envia se houver resposta
+        userResponse: directResponse || userResponse || undefined,
       }
       console.log("Sending payload:", payload)
 
@@ -101,7 +101,11 @@ export default function HomePage() {
 
       setCurrentResponse(data)
       setConversationState(data.conversationState || null)
-      setUserResponse("") // Limpa a resposta do utilizador
+
+      // Só limpa a resposta se não for uma resposta direta dos botões
+      if (!directResponse) {
+        setUserResponse("")
+      }
     } catch (error) {
       console.error("Erro ao enviar resposta do utilizador:", error)
     } finally {
@@ -177,11 +181,35 @@ export default function HomePage() {
                         disabled={loading}
                         className="rounded-lg border-gray-300 shadow-sm"
                       />
-                      <Button onClick={handleUserResponse} disabled={loading} className="rounded-lg">
+                      <Button onClick={() => handleUserResponse()} disabled={loading} className="rounded-lg">
                         {loading ? "A enviar..." : "Enviar"}
                       </Button>
                     </div>
                   </>
+                )}
+
+                {/* Confirmação de repetição */}
+                {currentResponse.type === "repeat-confirmation" && (
+                  <Card className="p-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg shadow">
+                    <p className="mb-4">{currentResponse.question}</p>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => handleUserResponse("sim")}
+                        className="flex-1 bg-amber-500 hover:bg-amber-600"
+                        disabled={loading}
+                      >
+                        {loading ? "Processando..." : "Sim"}
+                      </Button>
+                      <Button
+                        onClick={() => handleUserResponse("não")}
+                        className="flex-1 bg-white text-amber-800 border border-amber-300 hover:bg-amber-50"
+                        variant="outline"
+                        disabled={loading}
+                      >
+                        {loading ? "Processando..." : "Não"}
+                      </Button>
+                    </div>
+                  </Card>
                 )}
 
                 {/* Template selecionado */}
@@ -243,29 +271,11 @@ export default function HomePage() {
                   </Card>
                 )}
 
-                {/* Campo preenchido automaticamente */}
-                {currentResponse.type === "field-auto-filled" && (
-                  <Card className="p-4 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg shadow">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p>Campo <Badge variant="outline">{currentResponse.field}</Badge> preenchido automaticamente:</p>
-                        <p className="font-mono text-sm mt-1">{currentResponse.value}</p>
-                      </div>
-                      {loading && (
-                        <div className="flex items-center text-sm">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-600 mr-2"></div>
-                          Continuando...
-                        </div>
-                      )}
-                    </div>
-                  </Card>
-                )}
-
                 {/* Registro completo */}
                 {currentResponse.type === "record-complete" && (
                   <Card className="p-4 bg-purple-50 border border-purple-200 text-purple-800 rounded-lg shadow">
                     <p>Todos os campos preenchidos! Clique para confirmar e gravar.</p>
-                    <Button onClick={handleUserResponse} className="mt-4 rounded-lg" disabled={loading}>
+                    <Button onClick={() => handleUserResponse()} className="mt-4 rounded-lg" disabled={loading}>
                       Confirmar e Gravar
                     </Button>
                   </Card>
@@ -338,6 +348,4 @@ export default function HomePage() {
       </div>
     </div>
   )
-
-
 }
