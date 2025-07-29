@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
 
         console.log("=== DEBUG API CALL ===")
         console.log("Description:", description)
-        console.log("UserResponse:", userResponse)
+        console.log("UserResponse (raw from payload):", userResponse) // NOVO LOG
         console.log("ConversationState (received):", JSON.stringify(conversationState, null, 2))
 
         const { templates } = await templateCache.getTemplates()
@@ -210,6 +210,16 @@ export async function POST(req: NextRequest) {
                 const validatedFields: Record<string, any> = {}
                 let autoFilledCount = 0
 
+                // NEW LOG: Log template fields before validation loop
+                console.log(
+                    "Template control fields for validation:",
+                    state.currentTemplate.controlFields.map((f) => f.tag),
+                )
+                console.log(
+                    "Template data fields for validation:",
+                    state.currentTemplate.dataFields.map((f) => f.tag),
+                )
+
                 for (const [tag, value] of Object.entries(bulkFilledFields)) {
                     const fieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
                         (f) => f.tag === tag,
@@ -218,8 +228,10 @@ export async function POST(req: NextRequest) {
                         console.warn(`Campo ${tag} não existe no template, ignorando`)
                         continue
                     }
-
-                    const isRepeatable = fieldDef.repeatable
+                    // NEW LOG: Log field validation
+                    console.log(
+                        `Validating field ${tag}. Value: ${JSON.stringify(value)}. Is valid: ${isValidFieldValue(value, fieldDef)}. Field is repeatable: ${fieldDef.repeatable}`,
+                    )
 
                     if (isValidFieldValue(value, fieldDef)) {
                         if (typeof value === "object" && !Array.isArray(value)) {
@@ -231,7 +243,7 @@ export async function POST(req: NextRequest) {
                                 }
                             }
                             if (Object.keys(filteredValue).length > 0) {
-                                if (isRepeatable) {
+                                if (fieldDef.repeatable) {
                                     if (!Array.isArray(validatedFields[tag])) {
                                         validatedFields[tag] = []
                                     }
@@ -243,7 +255,7 @@ export async function POST(req: NextRequest) {
                             }
                         } else if (Array.isArray(value)) {
                             // Handle arrays for repeatable fields from bulk fill
-                            if (isRepeatable) {
+                            if (fieldDef.repeatable) {
                                 validatedFields[tag] = []
                                 for (const item of value) {
                                     if (typeof item === "object") {
@@ -271,7 +283,7 @@ export async function POST(req: NextRequest) {
                             }
                         } else {
                             // Simple field value
-                            if (isRepeatable) {
+                            if (fieldDef.repeatable) {
                                 if (!Array.isArray(validatedFields[tag])) {
                                     validatedFields[tag] = []
                                 }
@@ -288,11 +300,11 @@ export async function POST(req: NextRequest) {
                 }
 
                 const allTemplateFields = fieldInference.getAllTemplateFields(state.currentTemplate)
+                // NEW LOG: Log allTemplateFields and remainingFields after bulk fill
+                console.log("All template fields (from inference):", allTemplateFields)
+                console.log("Validated fields after bulk fill:", Object.keys(validatedFields))
                 const remainingFields = allTemplateFields.filter((field) => !(field in validatedFields))
-
-                console.log("All template fields:", allTemplateFields)
-                console.log("Campos preenchidos automaticamente:", Object.keys(validatedFields))
-                console.log("Campos restantes para perguntar:", remainingFields)
+                console.log("Remaining fields after bulk fill (before state update):", remainingFields)
 
                 state.filledFields = validatedFields
                 state.remainingFields = remainingFields
@@ -394,7 +406,12 @@ export async function POST(req: NextRequest) {
                 )
                 const isCurrentFieldRepeatable = currentFieldDef?.repeatable
                 const trimmedResponse = typeof userResponse === "string" ? userResponse.trim() : ""
+
+                // 1. Adicione estes logs logo após a linha `const trimmedResponse = typeof userResponse === "string" ? userResponse.trim() : "";`
+                console.log("UserResponse (raw from payload):", userResponse)
+                console.log("Trimmed response:", trimmedResponse)
                 const shouldStoreValue = isValidFieldValue(trimmedResponse, currentFieldDef)
+                console.log(`isValidFieldValue result for "${trimmedResponse}": ${shouldStoreValue}`)
 
                 if (
                     currentFieldDef &&
@@ -423,10 +440,23 @@ export async function POST(req: NextRequest) {
                         }
                         console.log(`User response for ${state.askedField}$${state.askedSubfield}: ${trimmedResponse}`)
                     } else {
-                        // Se o valor for inválido, para subcampos NÃO repetíveis, remove-o.
-                        // Para subcampos repetíveis, simplesmente não adiciona o valor inválido.
+                        // 2. Dentro do bloco `if (currentFieldDef && "subFieldDef" in currentFieldDef ...)` (para campos de dados com subcampos), localize o `else {` do `if (shouldStoreValue) {` e adicione os logs:
+                        // Onde está:
+                        // } else {
+                        //   if (!currentSubfieldDef?.repeatable) {
+                        //     delete (state.currentRepeatOccurrence.subfields as Record<string, any>)[state.askedSubfield!];
+                        //   }
+                        //   console.log(`Subcampo ${state.askedField}$${state.askedSubfield} deixado em branco`);
+                        // }
+                        // Mude para:
+                        console.log(
+                            `Value for ${state.askedField}$${state.askedSubfield} is invalid. Current subfield repeatable: ${currentSubfieldDef?.repeatable}.`,
+                        )
                         if (!currentSubfieldDef?.repeatable) {
                             delete (state.currentRepeatOccurrence.subfields as Record<string, any>)[state.askedSubfield!]
+                            console.log(`Deleting subfield ${state.askedSubfield} from currentRepeatOccurrence.subfields.`)
+                        } else {
+                            console.log(`Not adding invalid value for repeatable subfield ${state.askedSubfield}.`)
                         }
                         console.log(`Subcampo ${state.askedField}$${state.askedSubfield} deixado em branco`)
                     }
@@ -507,7 +537,7 @@ export async function POST(req: NextRequest) {
                         delete state.askedField
                         delete state.askedSubfield
                         state.repeatingField = false // Reinicia repeatingField se o campo principal estiver concluído
-                        console.log(`All subfields for ${dataFieldDef.tag} filled. Remaining main fields:`, state.remainingFields)
+                        console.log(`All subfields for ${dataFieldDef.tag} filled. Remaining main fields:`, state.remainingFields) // NOVO LOG
                     }
                 } else {
                     // Campo simples (sem subcampos)
@@ -523,8 +553,23 @@ export async function POST(req: NextRequest) {
                             console.log(`Field ${currentFieldDef?.tag} filled: ${trimmedResponse}`)
                         }
                     } else {
+                        // 4. Dentro do bloco `else {` (para campos simples, sem subcampos), localize o `else {` do `if (shouldStoreValue) {` e adicione os logs:
+                        // Onde está:
+                        // } else {
+                        //   if (!isCurrentFieldRepeatable) {
+                        //     delete state.filledFields[state.askedField];
+                        //   }
+                        //   console.log(`Campo ${state.askedField} deixado em branco`);
+                        // }
+                        // Mude para:
+                        console.log(
+                            `Value for ${state.askedField} is invalid. Current field repeatable: ${isCurrentFieldRepeatable}.`,
+                        )
                         if (!isCurrentFieldRepeatable) {
                             delete state.filledFields[state.askedField]
+                            console.log(`Deleting field ${state.askedField} from filledFields.`)
+                        } else {
+                            console.log(`Not adding invalid value for repeatable field ${state.askedField}.`)
                         }
                         console.log(`Campo ${state.askedField} deixado em branco`)
                     }
@@ -548,13 +593,20 @@ export async function POST(req: NextRequest) {
                     delete state.askedField
                     delete state.askedSubfield
                     state.repeatingField = false // Reinicia repeatingField
-                    console.log(`Field ${currentFieldDef?.tag} processed. Remaining main fields:`, state.remainingFields)
+                    console.log(`Field ${currentFieldDef?.tag} processed. Remaining main fields:`, state.remainingFields) // NOVO LOG
                 }
+                // NEW LOG: Log state.filledFields after processing user response
+                console.log("State.filledFields after user response processing:", JSON.stringify(state.filledFields, null, 2))
             }
 
             // 3. Processa o próximo campo/subcampo a ser perguntado
             while (state.remainingFields.length > 0 || (state.askedField && state.askedSubfield)) {
                 const currentFieldTag = state.askedField || state.remainingFields[0]
+                // NEW LOG: Log currentFieldTag being processed
+                console.log(
+                    `Determining next field to ask. Current field tag: ${currentFieldTag}. Remaining fields: ${state.remainingFields.length}`,
+                )
+
                 const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
                     (f) => f.tag === currentFieldTag,
                 )
@@ -716,13 +768,24 @@ Regras estritas:
 
 Exemplo de entrada com campos e subcampos repetíveis:
 {
-  "001": "12345",
-  "200": [{"a": "Título1", "b": "Subtítulo1"}, {"a": "Título2", "b": "não"}], // Ignorar $b na segunda ocorrência
-  "102": {"a": ["ValorA1", "ValorA2"], "b": "ValorB"}, // Subcampo 'a' repetível
-  "008": ["ValorX", "ValorY"] // Campo '008' repetível
+"001": "12345",
+"200": [{"a": "Título1", "b": "Subtítulo1"}, {"a": "Título2", "b": "não"}], // Ignorar $b na segunda ocorrência
+"102": {"a": ["ValorA1", "ValorA2"], "b": "ValorB"}, // Subcampo 'a' repetível
+"008": ["ValorX", "ValorY"] // Campo '008' repetível
 }
 
-Saída esperada:
+// NOVO EXEMPLO: Campo de dados NÃO repetível com subcampos NÃO repetíveis
+Exemplo de entrada com campo de dados não repetível e subcampos:
+{
+"101": {"a": "por", "b": "eng"}, // Campo 101 não repetível, subcampos 'a' e 'b' não repetíveis
+"200": {"a": "Título Único"}
+}
+
+Saída esperada para o NOVO EXEMPLO:
+101  $apor$beng
+200  $aTítulo Único
+
+Saída esperada para o exemplo anterior:
 001 12345
 200  $aTítulo1$bSubtítulo1
 200  $aTítulo2
@@ -737,7 +800,7 @@ Regra adicional para subcampos: Cada subcampo é representado por '$' seguido do
 ${JSON.stringify(state.filledFields, null, 2)}`
 
                 const unimarcCompletion = await openai.chat.completions.create({
-                    model: "gpt-4o",
+                    model: "gpt-4",
                     messages: [
                         {
                             role: "system",

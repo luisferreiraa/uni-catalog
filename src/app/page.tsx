@@ -1,51 +1,85 @@
 "use client"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { useState, useEffect } from "react"
-import QuestionDisplay from "@/components/question-display"
-import type { CatalogResponse, ConversationState } from "@/app/types/unimarc"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { BookOpen } from "lucide-react"
+// Esta diretiva transforma o component num Client Component
+// É necessárrio porque:
+// 1. Usamos hooks como useState e useEffect
+// 2. Temos interatividade com o utilizador
+// 3. Precisamos de acesso ao window object (indiretamente via fetch API)
+
+// Importações agrupadas por categoria
+import { useState, useEffect } from "react"   // Hooks básicos do React
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"   // Componentes de UI
+import QuestionDisplay from "@/components/question-display"   // Componente personalizado
+import type { CatalogResponse, ConversationState } from "@/app/types/unimarc"   // Tipos TypeScript
+import { Button } from "@/components/ui/button"   // Botões estilizados
+import { Input } from "@/components/ui/input"   // Campos de entrada
+import { Badge } from "@/components/ui/badge"   // Componentes de badge
+import { BookOpen } from "lucide-react"   // Ícone de livro
+
+// Tipos importados:
+// CatalogResponse: Define a estrutura das respostas da API
+// ConversationState: Controla o estado da conversa/fluxo de catalogação
 
 export default function HomePage() {
+  // Estado que armazena a resposta atual da API
+  // Tipo CatalogResponse contém todos os possíveis tipos de resposta
   const [currentResponse, setCurrentResponse] = useState<CatalogResponse | null>(null)
+
+  // Estado de loading para feedback visual durante requisições
   const [loading, setLoading] = useState(false)
+
+  // Armazena a descrição inicial do item a ser catalogado
   const [description, setDescription] = useState("")
+
+  // Armazena as respostas do utilizador durante o fluxo de perguntas
   const [userResponse, setUserResponse] = useState("")
+
+  // Controla o estado atual da conversação com a API
+  // Inclui campos preenchidos, passo atual, etc.
   const [conversationState, setConversationState] = useState<ConversationState | null>(null)
 
-  // Auto-continuação para template-selected, bulk-auto-filled, e field-auto-filled
+  // useEffect para lidar com auto-continuação em certos estados
   useEffect(() => {
+    // Logs para debugging (remover em produção)
     console.log("useEffect triggered - currentResponse:", currentResponse?.type)
     console.log("useEffect triggered - loading:", loading)
     console.log("useEffect triggered - conversationState:", conversationState?.step)
+
+    // Condições de saída antecipada
     if (loading) {
       console.log("useEffect: Skipping - already loading")
       return
     }
+
     if (!currentResponse || !conversationState) {
       console.log("useEffect: Skipping - no response or conversation state")
       return
     }
-    // Auto-continuar apenas para estes tipos de resposta
+
+    // Tipos de resposta que devem auto-confirmar
     const shouldAutoContinue = ["template-selected", "bulk-auto-filled", "field-auto-filled"].includes(
       currentResponse.type,
     )
+
     if (shouldAutoContinue) {
       console.log(`useEffect: Auto-continuing for ${currentResponse.type}`)
-      const timer = setTimeout(() => {
-        handleUserResponse()
-      }, 1500) // 1.5 segundos para melhor feedback visual
-    }
-  }, [currentResponse, loading, conversationState])
 
+      // Timeout para melhor experiência do utilizador (feedback visual)
+      const timer = setTimeout(() => {
+        handleUserResponse()    // Chama a função principal da resposta
+      }, 1500) // 1.5 segundos
+    }
+  }, [currentResponse, loading, conversationState])   // Dependências do efeito
+
+  // Função para iniciar o processo de catalogação
   const handleInitialRequest = async () => {
     console.log("handleInitialRequest called with description:", description)
-    setLoading(true)
+    setLoading(true)    // Ativa o estado de loading
+
     try {
       const payload = { description }
       console.log("Sending initial payload:", payload)
+
+      // Requisição para a API route do Next.js
       const res = await fetch("/api/uni-dialog", {
         method: "POST",
         headers: {
@@ -53,27 +87,35 @@ export default function HomePage() {
         },
         body: JSON.stringify(payload),
       })
+
+
       const data: CatalogResponse = await res.json()
       console.log("Received initial response:", data)
+
+      // Atualiza estados com a resposta
       setCurrentResponse(data)
       setConversationState(data.conversationState || null)
+
     } catch (error) {
       console.error("Erro ao iniciar a conversação:", error)
     } finally {
-      setLoading(false)
+      setLoading(false)   // Desativa loading independentemente do resultado
     }
   }
 
+  // Função para lidar com respostas do utilizador
   const handleUserResponse = async (directResponse?: string) => {
     console.log("handleUserResponse called with:", directResponse || userResponse)
     setLoading(true)
+
     try {
       const payload = {
         description,
         conversationState,
-        userResponse: directResponse || userResponse || undefined,
+        userResponse: directResponse !== undefined ? directResponse : userResponse,
       }
       console.log("Sending payload:", payload)
+
       const res = await fetch("/api/uni-dialog", {
         method: "POST",
         headers: {
@@ -81,14 +123,18 @@ export default function HomePage() {
         },
         body: JSON.stringify(payload),
       })
+
       const data: CatalogResponse = await res.json()
       console.log("Received response:", data)
+
       setCurrentResponse(data)
       setConversationState(data.conversationState || null)
-      // Só limpa a resposta se não for uma resposta direta dos botões
+
+      // Limpa a resposta do utilizador apenas se não for uma resposta direta
       if (!directResponse) {
         setUserResponse("")
       }
+
     } catch (error) {
       console.error("Erro ao enviar resposta do utilizador:", error)
     } finally {
@@ -100,6 +146,8 @@ export default function HomePage() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-gray-900 font-poppins">
       <div className="max-w-4xl w-full">
         <Card className="p-8 space-y-6 flex flex-col items-center bg-white rounded-xl border border-gray-200 shadow-lg min-h-[500px] justify-between">
+
+          {/* Cabeçalho */}
           <CardHeader className="w-full text-center">
             <CardTitle className="flex items-center justify-center gap-3 text-3xl font-extrabold text-gray-900">
               <BookOpen className="w-8 h-8 text-blue-600" />
@@ -107,8 +155,11 @@ export default function HomePage() {
             </CardTitle>
             <p className="text-gray-700 text-sm mt-2">Otimizado com IA para eficiência máxima</p>
           </CardHeader>
+
+          {/* Conteúdo Principal */}
           <CardContent className="space-y-6 w-full flex-grow flex flex-col justify-center">
-            {/* Status info */}
+
+            {/* Barra de Status */}
             {conversationState && (
               <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200 w-full max-w-lg mx-auto shadow-sm">
                 <div className="flex items-center justify-between text-sm">
@@ -129,8 +180,10 @@ export default function HomePage() {
                 )}
               </div>
             )}
-            {/* Input inicial */}
+
+            {/* Fluxo Principal */}
             {!currentResponse && (
+              // Estado inicial - Input de descrição
               <div className="w-full max-w-md mx-auto space-y-4">
                 <Input
                   className="shadow-sm rounded-lg border-gray-300 bg-white text-gray-900 placeholder:text-gray-500 focus:border-blue-500 focus:ring-blue-500"
@@ -148,10 +201,10 @@ export default function HomePage() {
                 </Button>
               </div>
             )}
-            {/* Respostas e estados */}
+
+            {/* Pergunta ao utilizador */}
             {currentResponse && (
               <div className="w-full max-w-lg mx-auto space-y-6">
-                {/* Pergunta ao usuário */}
                 {currentResponse.type === "field-question" && (
                   <>
                     <QuestionDisplay response={currentResponse} />
