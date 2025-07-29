@@ -3,7 +3,15 @@ import OpenAI from "openai"
 import { templateCache } from "@/lib/template-cache"
 import { fieldInference } from "@/lib/field-heuristics"
 import { promptOptimizer } from "@/lib/prompt-optimizer"
-import type { CatalogRequest, CatalogResponse, ConversationState, DataField, SubFieldDef } from "@/app/types/unimarc"
+import type {
+    CatalogRequest,
+    CatalogResponse,
+    ConversationState,
+    DataField,
+    SubFieldDef,
+    Translation,
+    FieldDefinition, // Importar FieldDefinition
+} from "@/app/types/unimarc"
 import { databaseService } from "@/lib/database"
 import { FieldType, type Prisma } from "@prisma/client"
 
@@ -13,26 +21,26 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 })
 
+// MODIFICADO: isValidFieldValue para lidar com arrays (subcampos repetíveis)
 function isValidFieldValue(value: any, fieldDef?: any): boolean {
-    if (value === undefined || value === null) return false;
-
+    if (value === undefined || value === null) return false
     if (typeof value === "string") {
-        const trimmed = value.trim();
-        if (trimmed.length === 0) return false;
+        const trimmed = value.trim()
+        if (trimmed.length === 0) return false
         if (["n/a", "não se aplica", "não", "nao", "-", "none", "null"].includes(trimmed.toLowerCase())) {
-            return fieldDef?.mandatory; // Only accept if field is mandatory
+            return fieldDef?.mandatory // Only accept if field is mandatory
         }
-        return true;
+        return true
     }
-
+    if (Array.isArray(value)) {
+        // This branch is for when 'value' itself is an array (e.g., a repeatable simple field, or a repeatable subfield's value)
+        return value.some((item) => isValidFieldValue(item, fieldDef))
+    }
     if (typeof value === "object") {
-        return Object.values(value).some(v =>
-            typeof v === "string" && v.trim().length > 0 &&
-            !["n/a", "não se aplica", "não", "nao", "-", "none", "null"].includes(v.toLowerCase())
-        );
+        // This branch is for when 'value' is an object (e.g., subfields of a data field)
+        return Object.values(value).some((v) => isValidFieldValue(v, fieldDef))
     }
-
-    return false;
+    return false
 }
 
 export async function POST(req: NextRequest) {
@@ -64,6 +72,7 @@ export async function POST(req: NextRequest) {
                 autoFilledCount: 0,
                 repeatingField: false,
                 repeatConfirmation: undefined,
+                currentRepeatOccurrence: undefined,
             }
 
         console.log("Current state (processed):", state.step)
@@ -75,7 +84,6 @@ export async function POST(req: NextRequest) {
         // ============================================
         if (state.step === "template-selection") {
             console.log("=== INICIANDO SELEÇÃO DE TEMPLATE ===")
-
             const { prompt, systemMessage, maxTokens, temperature, model } = promptOptimizer.buildPrompt(
                 "template-selection",
                 description,
@@ -130,6 +138,7 @@ export async function POST(req: NextRequest) {
                     autoFilledCount: 0,
                     repeatingField: false,
                     repeatConfirmation: undefined,
+                    currentRepeatOccurrence: undefined,
                 },
                 template: {
                     id: selectedTemplate.id,
@@ -150,7 +159,6 @@ export async function POST(req: NextRequest) {
         // ============================================
         if (state.step === "bulk-auto-fill") {
             console.log("=== INICIANDO PREENCHIMENTO AUTOMÁTICO EM MASSA ===")
-
             if (!state.currentTemplate) {
                 console.log("ERROR: No current template found")
                 return NextResponse.json(
@@ -206,28 +214,72 @@ export async function POST(req: NextRequest) {
                     const fieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
                         (f) => f.tag === tag,
                     )
-
                     if (!fieldDef) {
                         console.warn(`Campo ${tag} não existe no template, ignorando`)
                         continue
                     }
 
+                    const isRepeatable = fieldDef.repeatable
+
                     if (isValidFieldValue(value, fieldDef)) {
-                        if (typeof value === 'object') {
-                            // Filter out invalid subfields
-                            const filteredValue: Record<string, any> = {};
+                        if (typeof value === "object" && !Array.isArray(value)) {
+                            // Filter out invalid subfields for data fields
+                            const filteredValue: Record<string, any> = {}
                             for (const [subcode, subvalue] of Object.entries(value)) {
                                 if (isValidFieldValue(subvalue)) {
-                                    filteredValue[subcode] = subvalue;
+                                    filteredValue[subcode] = subvalue
                                 }
                             }
                             if (Object.keys(filteredValue).length > 0) {
-                                validatedFields[tag] = filteredValue;
-                                autoFilledCount++;
+                                if (isRepeatable) {
+                                    if (!Array.isArray(validatedFields[tag])) {
+                                        validatedFields[tag] = []
+                                    }
+                                    ; (validatedFields[tag] as any[]).push(filteredValue)
+                                } else {
+                                    validatedFields[tag] = filteredValue
+                                }
+                                autoFilledCount++
+                            }
+                        } else if (Array.isArray(value)) {
+                            // Handle arrays for repeatable fields from bulk fill
+                            if (isRepeatable) {
+                                validatedFields[tag] = []
+                                for (const item of value) {
+                                    if (typeof item === "object") {
+                                        // Array of subfield objects
+                                        const filteredItem: Record<string, any> = {}
+                                        for (const [subcode, subvalue] of Object.entries(item)) {
+                                            if (isValidFieldValue(subvalue)) {
+                                                filteredItem[subcode] = subvalue
+                                            }
+                                        }
+                                        if (Object.keys(filteredItem).length > 0) {
+                                            ; (validatedFields[tag] as any[]).push(filteredItem)
+                                            autoFilledCount++
+                                        }
+                                    } else {
+                                        // Array of simple values
+                                        if (isValidFieldValue(item)) {
+                                            ; (validatedFields[tag] as any[]).push(item)
+                                            autoFilledCount++
+                                        }
+                                    }
+                                }
+                            } else {
+                                console.warn(`Campo ${tag} não é repetível, mas recebeu um array. Ignorando array.`)
                             }
                         } else {
-                            validatedFields[tag] = value;
-                            autoFilledCount++;
+                            // Simple field value
+                            if (isRepeatable) {
+                                if (!Array.isArray(validatedFields[tag])) {
+                                    validatedFields[tag] = []
+                                }
+                                ; (validatedFields[tag] as any[]).push(value)
+                            } else {
+                                validatedFields[tag] = value
+                            }
+                            autoFilledCount++
                         }
                         console.log(`Campo ${tag} preenchido automaticamente:`, value)
                     } else {
@@ -272,7 +324,6 @@ export async function POST(req: NextRequest) {
         // ===================================
         if (state.step === "field-filling") {
             console.log("=== INICIANDO PREENCHIMENTO INDIVIDUAL DE CAMPOS ===")
-
             if (!state.currentTemplate) {
                 return NextResponse.json(
                     {
@@ -287,15 +338,63 @@ export async function POST(req: NextRequest) {
             console.log("Currently asked field:", state.askedField)
             console.log("User response received:", userResponse)
 
-            // Processa resposta do utilizador (se existir)
-            if (state.askedField && userResponse !== undefined && userResponse !== null) {
+            // 1. Processa resposta do utilizador a uma CONFIRMAÇÃO de repetição (se existir)
+            if (state.repeatConfirmation && userResponse !== undefined && userResponse !== null) {
+                const wantsToRepeat = userResponse.trim().toLowerCase() === "sim"
+                const fieldToRepeatTag = state.repeatConfirmation.field
+                const subfieldToRepeatCode = state.repeatConfirmation.subfield
+
+                delete state.repeatConfirmation // Consome o pedido de confirmação
+                state.repeatingField = wantsToRepeat // Define repeatingField com base na escolha do utilizador
+
+                if (wantsToRepeat) {
+                    console.log(
+                        `User wants to repeat ${fieldToRepeatTag}${subfieldToRepeatCode ? "$" + subfieldToRepeatCode : ""}`,
+                    )
+                    // Define askedField/askedSubfield de volta para o que está a ser repetido
+                    state.askedField = fieldToRepeatTag
+                    state.askedSubfield = subfieldToRepeatCode
+                    // Não retorna aqui. O loop 'while' abaixo irá gerar a pergunta para o campo/subcampo repetido.
+                } else {
+                    console.log(
+                        `User does not want to repeat ${fieldToRepeatTag}${subfieldToRepeatCode ? "$" + subfieldToRepeatCode : ""}`,
+                    )
+                    // Se o utilizador disse NÃO, avança para o próximo campo/subcampo lógico
+                    if (subfieldToRepeatCode) {
+                        // Se foi uma repetição de subcampo, avança para o próximo subcampo do campo principal atual
+                        const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
+                            (f) => f.tag === fieldToRepeatTag,
+                        ) as DataField | undefined
+                        if (currentFieldDef) {
+                            const currentSubfieldIdx = currentFieldDef.subFieldDef.findIndex((sf) => sf.code === subfieldToRepeatCode)
+                            const nextSubfieldIdx = currentSubfieldIdx + 1
+                            if (nextSubfieldIdx < currentFieldDef.subFieldDef.length) {
+                                state.askedSubfield = currentFieldDef.subFieldDef[nextSubfieldIdx].code
+                            } else {
+                                // Todos os subcampos para este campo principal estão concluídos, avança para o próximo campo principal
+                                state.remainingFields = state.remainingFields.filter((f) => f !== fieldToRepeatTag)
+                                delete state.askedField
+                                delete state.askedSubfield
+                                delete state.currentRepeatOccurrence // Limpa a ocorrência se o campo principal estiver concluído
+                            }
+                        }
+                    } else {
+                        // Se foi uma repetição de campo principal, avança para o próximo campo principal
+                        state.remainingFields = state.remainingFields.filter((f) => f !== fieldToRepeatTag)
+                        delete state.askedField
+                        delete state.askedSubfield
+                    }
+                }
+                // Após processar a confirmação, a userResponse foi consumida para esta iteração.
+                // O loop 'while' abaixo determinará a próxima pergunta.
+            } else if (state.askedField && userResponse !== undefined && userResponse !== null) {
+                // 2. Processa resposta do utilizador a uma PERGUNTA de campo (se existir e não for uma resposta de confirmação)
                 const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
                     (f) => f.tag === state.askedField,
                 )
-
-                const isRepeatingField = state.repeatingField === true;
-                const trimmedResponse = typeof userResponse === 'string' ? userResponse.trim() : '';
-                const shouldStoreValue = isValidFieldValue(trimmedResponse, currentFieldDef);
+                const isCurrentFieldRepeatable = currentFieldDef?.repeatable
+                const trimmedResponse = typeof userResponse === "string" ? userResponse.trim() : ""
+                const shouldStoreValue = isValidFieldValue(trimmedResponse, currentFieldDef)
 
                 if (
                     currentFieldDef &&
@@ -305,29 +404,36 @@ export async function POST(req: NextRequest) {
                 ) {
                     // É um campo de dados com subcampos
                     const dataFieldDef = currentFieldDef as DataField
-                    const currentSubfieldDef = dataFieldDef.subFieldDef.find(
-                        (sf) => sf.code === state.askedSubfield
-                    )
+                    const currentSubfieldDef = dataFieldDef.subFieldDef.find((sf) => sf.code === state.askedSubfield)
 
-                    if (!shouldStoreValue) {
-                        // Remove o valor se existir
-                        if (state.filledFields[state.askedField]?.[state.askedSubfield!] !== undefined) {
-                            delete state.filledFields[state.askedField][state.askedSubfield!];
-                        }
-                        console.log(`Subcampo ${state.askedField}$${state.askedSubfield} deixado em branco`);
-                    } else {
-                        // Armazena o valor válido
-                        if (!state.filledFields[state.askedField]) {
-                            state.filledFields[state.askedField] = {};
-                        }
-                        state.filledFields[state.askedField][state.askedSubfield!] = trimmedResponse;
-                        console.log(`User response for ${state.askedField}$${state.askedSubfield}: ${trimmedResponse}`);
+                    // Garante que currentRepeatOccurrence existe para este campo
+                    if (!state.currentRepeatOccurrence || state.currentRepeatOccurrence.tag !== state.askedField) {
+                        state.currentRepeatOccurrence = { tag: state.askedField, subfields: {} }
                     }
 
-                    // Verifica se o subcampo é repetível
-                    if (currentSubfieldDef?.repeatable && !isRepeatingField && shouldStoreValue) {
-                        const confirmPrompt = `Adicionou um valor para ${state.askedField}$${state.askedSubfield}. Deseja adicionar outro valor para este mesmo subcampo? (sim/não)`
+                    if (shouldStoreValue) {
+                        // Armazenar valores de subcampos repetíveis como arrays
+                        if (currentSubfieldDef?.repeatable) {
+                            if (!Array.isArray(state.currentRepeatOccurrence.subfields[state.askedSubfield!])) {
+                                state.currentRepeatOccurrence.subfields[state.askedSubfield!] = []
+                            }
+                            ; (state.currentRepeatOccurrence.subfields[state.askedSubfield!] as any[]).push(trimmedResponse)
+                        } else {
+                            state.currentRepeatOccurrence.subfields[state.askedSubfield!] = trimmedResponse
+                        }
+                        console.log(`User response for ${state.askedField}$${state.askedSubfield}: ${trimmedResponse}`)
+                    } else {
+                        // Se o valor for inválido, para subcampos NÃO repetíveis, remove-o.
+                        // Para subcampos repetíveis, simplesmente não adiciona o valor inválido.
+                        if (!currentSubfieldDef?.repeatable) {
+                            delete (state.currentRepeatOccurrence.subfields as Record<string, any>)[state.askedSubfield!]
+                        }
+                        console.log(`Subcampo ${state.askedField}$${state.askedSubfield} deixado em branco`)
+                    }
 
+                    // Se o subcampo é repetível E o utilizador forneceu um valor válido, pergunta pela confirmação de repetição
+                    if (currentSubfieldDef?.repeatable && shouldStoreValue) {
+                        const confirmPrompt = `Adicionou um valor para ${state.askedField}$${state.askedSubfield}. Deseja adicionar outro valor para este mesmo subcampo? (sim/não)`
                         return NextResponse.json({
                             type: "repeat-confirmation",
                             field: state.askedField,
@@ -335,117 +441,98 @@ export async function POST(req: NextRequest) {
                             question: confirmPrompt,
                             conversationState: {
                                 ...state,
-                                repeatingField: true
-                            }
+                                repeatingField: true, // Indica que estamos num ciclo de repetição para este subcampo
+                                repeatConfirmation: { field: state.askedField, subfield: state.askedSubfield }, // Armazena o contexto de confirmação
+                            },
                         } as CatalogResponse)
                     }
 
-                    // Avança para o próximo subcampo ou campo
+                    // Se não estiver a repetir este subcampo, avança para o próximo subcampo ou campo principal
                     const currentSubfieldIdx = dataFieldDef.subFieldDef.findIndex((sf) => sf.code === state.askedSubfield)
                     const nextSubfieldIdx = currentSubfieldIdx + 1
 
                     if (nextSubfieldIdx < dataFieldDef.subFieldDef.length) {
                         state.askedSubfield = dataFieldDef.subFieldDef[nextSubfieldIdx].code
-                        state.repeatingField = false
+                        // state.repeatingField deve ser gerido pela lógica de repeatConfirmation, não aqui.
                     } else {
-                        // Verifica se o campo principal é repetível
-                        if (dataFieldDef.repeatable && !isRepeatingField &&
-                            Object.keys(state.filledFields[state.askedField] || {}).length > 0) {
-                            const confirmPrompt = `Completou todos os subcampos de ${state.askedField}. Deseja adicionar outra ocorrência deste campo? (sim/não)`
+                        // Todos os subcampos para a ocorrência atual estão preenchidos
+                        if (Object.keys(state.currentRepeatOccurrence?.subfields || {}).length > 0) {
+                            if (!Array.isArray(state.filledFields[state.askedField])) {
+                                state.filledFields[state.askedField] = []
+                            }
+                            ; (state.filledFields[state.askedField] as any[]).push(state.currentRepeatOccurrence?.subfields)
+                            console.log(`Completed occurrence for ${state.askedField}:`, state.currentRepeatOccurrence?.subfields)
+                        } else {
+                            console.log(`Occurrence for ${state.askedField} has no valid subfields, not storing.`)
+                        }
+                        delete state.currentRepeatOccurrence // Limpa para a próxima ocorrência
 
+                        // Se o campo principal é repetível E acabamos de completar uma ocorrência, pergunta pela confirmação de repetição do campo principal
+                        if (dataFieldDef.repeatable && Object.keys(state.filledFields[state.askedField] || {}).length > 0) {
+                            const confirmPrompt = `Completou todos os subcampos de ${state.askedField}. Deseja adicionar outra ocorrência deste campo? (sim/não)`
                             return NextResponse.json({
                                 type: "repeat-confirmation",
                                 field: state.askedField,
                                 question: confirmPrompt,
                                 conversationState: {
                                     ...state,
-                                    repeatingField: true
-                                }
+                                    repeatingField: true, // Indica que estamos num ciclo de repetição para este campo principal
+                                    repeatConfirmation: { field: state.askedField }, // Armazena o contexto de confirmação
+                                },
                             } as CatalogResponse)
                         }
 
-                        // Remove o campo se não tiver subcampos válidos
-                        if (Object.keys(state.filledFields[state.askedField] || {}).length === 0) {
-                            delete state.filledFields[state.askedField]
-                        }
-
+                        // Avança para o próximo campo principal
                         state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
                         delete state.askedField
                         delete state.askedSubfield
-                        delete state.repeatingField
+                        state.repeatingField = false // Reinicia repeatingField se o campo principal estiver concluído
                         console.log(`All subfields for ${dataFieldDef.tag} filled. Remaining main fields:`, state.remainingFields)
                     }
                 } else {
                     // Campo simples (sem subcampos)
-                    if (!shouldStoreValue) {
-                        delete state.filledFields[state.askedField]
-                        console.log(`Campo ${state.askedField} deixado em branco`);
+                    if (shouldStoreValue) {
+                        if (isCurrentFieldRepeatable) {
+                            if (!Array.isArray(state.filledFields[state.askedField])) {
+                                state.filledFields[state.askedField] = []
+                            }
+                            ; (state.filledFields[state.askedField] as any[]).push(trimmedResponse)
+                            console.log(`Field ${currentFieldDef?.tag} added: ${trimmedResponse}`)
+                        } else {
+                            state.filledFields[state.askedField] = trimmedResponse
+                            console.log(`Field ${currentFieldDef?.tag} filled: ${trimmedResponse}`)
+                        }
                     } else {
-                        state.filledFields[state.askedField] = trimmedResponse
-                        console.log(`Field ${currentFieldDef?.tag} filled: ${trimmedResponse}`)
+                        if (!isCurrentFieldRepeatable) {
+                            delete state.filledFields[state.askedField]
+                        }
+                        console.log(`Campo ${state.askedField} deixado em branco`)
                     }
 
-                    // Verifica se o campo é repetível
-                    if (currentFieldDef?.repeatable && !isRepeatingField && shouldStoreValue) {
+                    // Se o campo simples é repetível E o utilizador forneceu um valor válido, pergunta pela confirmação de repetição
+                    if (isCurrentFieldRepeatable && shouldStoreValue) {
                         const confirmPrompt = `Adicionou um valor para ${state.askedField}. Deseja adicionar outro valor para este mesmo campo? (sim/não)`
-
                         return NextResponse.json({
                             type: "repeat-confirmation",
                             field: state.askedField,
                             question: confirmPrompt,
                             conversationState: {
                                 ...state,
-                                repeatingField: true
-                            }
+                                repeatingField: true, // Indica que estamos num ciclo de repetição para este campo
+                                repeatConfirmation: { field: state.askedField }, // Armazena o contexto de confirmação
+                            },
                         } as CatalogResponse)
                     }
 
                     state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
                     delete state.askedField
                     delete state.askedSubfield
-                    delete state.repeatingField
+                    state.repeatingField = false // Reinicia repeatingField
                     console.log(`Field ${currentFieldDef?.tag} processed. Remaining main fields:`, state.remainingFields)
                 }
             }
 
-            // Processa confirmação de repetição (se existir)
-            if (state.repeatConfirmation !== undefined && userResponse !== undefined && userResponse !== null) {
-                const wantsToRepeat = userResponse.trim().toLowerCase() === 'sim'
-
-                if (wantsToRepeat) {
-                    console.log(`User wants to repeat ${state.askedField}${state.askedSubfield ? '$' + state.askedSubfield : ''}`)
-                    delete state.repeatConfirmation
-                    state.repeatingField = true
-                } else {
-                    console.log(`User does not want to repeat ${state.askedField}${state.askedSubfield ? '$' + state.askedSubfield : ''}`)
-                    delete state.repeatConfirmation
-                    delete state.repeatingField
-
-                    if (state.askedSubfield) {
-                        const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
-                            (f) => f.tag === state.askedField,
-                        ) as DataField | undefined
-
-                        if (currentFieldDef) {
-                            const currentSubfieldIdx = currentFieldDef.subFieldDef.findIndex((sf) => sf.code === state.askedSubfield)
-                            const nextSubfieldIdx = currentSubfieldIdx + 1
-
-                            if (nextSubfieldIdx < currentFieldDef.subFieldDef.length) {
-                                state.askedSubfield = currentFieldDef.subFieldDef[nextSubfieldIdx].code
-                            } else {
-                                state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
-                                delete state.askedField
-                                delete state.askedSubfield
-                            }
-                        }
-                    } else {
-                        state.remainingFields = state.remainingFields.filter((f) => f !== state.askedField)
-                        delete state.askedField
-                    }
-                }
-            }
-
-            // Processa próximo campo/subcampo
+            // 3. Processa o próximo campo/subcampo a ser perguntado
             while (state.remainingFields.length > 0 || (state.askedField && state.askedSubfield)) {
                 const currentFieldTag = state.askedField || state.remainingFields[0]
                 const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
@@ -457,6 +544,8 @@ export async function POST(req: NextRequest) {
                     state.remainingFields.shift()
                     delete state.askedField
                     delete state.askedSubfield
+                    state.repeatingField = false
+                    delete state.currentRepeatOccurrence // Limpa se a definição do campo estiver incorreta
                     continue
                 }
 
@@ -465,17 +554,27 @@ export async function POST(req: NextRequest) {
                     Array.isArray((currentFieldDef as DataField).subFieldDef) &&
                     (currentFieldDef as DataField).subFieldDef.length > 0
 
-                // Prepara pergunta para o utilizador
+                // Inicializa currentRepeatOccurrence se estiver a iniciar um novo campo de dados com subcampos
+                // ou se estiver a iniciar uma nova ocorrência de um campo de dados repetível com subcampos
+                if (
+                    isDataFieldWithSubfields &&
+                    (!state.currentRepeatOccurrence || state.currentRepeatOccurrence.tag !== currentFieldTag)
+                ) {
+                    state.currentRepeatOccurrence = { tag: currentFieldTag, subfields: {} }
+                } else if (!isDataFieldWithSubfields) {
+                    delete state.currentRepeatOccurrence // Limpa se não for um campo de dados com subcampos
+                }
+
                 let subfieldToAskCode: string | undefined
                 let subfieldToAskDef: SubFieldDef | undefined
 
                 if (isDataFieldWithSubfields) {
                     const dataFieldDef = currentFieldDef as DataField
-
                     if (state.askedField === currentFieldTag && state.askedSubfield) {
                         subfieldToAskCode = state.askedSubfield
                         subfieldToAskDef = dataFieldDef.subFieldDef.find((sf) => sf.code === subfieldToAskCode)
                     } else {
+                        // Se estiver a iniciar uma nova ocorrência ou pela primeira vez para este campo
                         subfieldToAskCode = dataFieldDef.subFieldDef[0].code
                         subfieldToAskDef = dataFieldDef.subFieldDef[0]
                     }
@@ -484,11 +583,10 @@ export async function POST(req: NextRequest) {
                 }
 
                 // Constrói a pergunta com indicação de obrigatoriedade
-                const fieldTranslation = currentFieldDef.translations.find((t) => t.language === language)
+                const fieldTranslation = currentFieldDef.translations.find((t: Translation) => t.language === language)
                 const fieldName = fieldTranslation?.name || currentFieldTag
                 const tips = fieldTranslation?.tips ?? []
                 const tipsText = tips.length > 0 ? `\n\n💡 Dicas:\n${tips.map((tip) => `• ${tip}`).join("\n")}` : ""
-
                 let questionText = `Por favor, forneça: ${fieldName} [${currentFieldTag}]`
                 let subfieldNameForResponse: string | null = null
                 let subfieldTips: string[] = []
@@ -502,11 +600,9 @@ export async function POST(req: NextRequest) {
                     } else {
                         subfieldNameForResponse = subfieldToAskCode
                     }
-
                     // Adiciona indicação de obrigatoriedade
                     const mandatoryText = subfieldToAskDef?.mandatory ? " (obrigatório)" : " (opcional)"
                     questionText += ` - ${subfieldPart}${mandatoryText}`
-
                     subfieldTips = subfieldTranslation?.tips ?? []
                     if (!subfieldToAskDef?.mandatory) {
                         subfieldTips.unshift("Pode deixar em branco se não se aplicar")
@@ -519,7 +615,6 @@ export async function POST(req: NextRequest) {
                         tips.unshift("Pode deixar em branco se não se aplicar")
                     }
                 }
-
                 questionText += `.${tipsText}`
 
                 console.log("=== ASKING USER FOR FIELD ===")
@@ -539,7 +634,8 @@ export async function POST(req: NextRequest) {
                         ...state,
                         askedField: currentFieldTag,
                         askedSubfield: subfieldToAskCode,
-                        repeatingField: false
+                        repeatingField: state.repeatingField, // Preserva o estado de repeatingField
+                        currentRepeatOccurrence: state.currentRepeatOccurrence, // Preserva a ocorrência atual
                     },
                 } as CatalogResponse)
             }
@@ -547,7 +643,8 @@ export async function POST(req: NextRequest) {
             // Todos os campos preenchidos - avança para confirmação
             console.log("=== ALL FIELDS FILLED - ADVANCING TO CONFIRMATION ===")
             state.step = "confirmation"
-
+            // LOG: Estado antes da etapa de confirmação
+            console.log("State before confirmation step:", JSON.stringify(state, null, 2))
             return new Response(
                 JSON.stringify({
                     type: "record-complete",
@@ -572,7 +669,6 @@ export async function POST(req: NextRequest) {
         // ================================
         if (state.step === "confirmation") {
             console.log("=== INICIANDO CONFIRMAÇÃO E GRAVAÇÃO ===")
-
             if (!state.currentTemplate) {
                 return NextResponse.json(
                     {
@@ -584,30 +680,40 @@ export async function POST(req: NextRequest) {
             }
 
             try {
+                // LOG: Campos preenchidos antes da conversão UNIMARC e salvamento
+                console.log("Filled fields before UNIMARC conversion and saving:", JSON.stringify(state.filledFields, null, 2))
+
                 // Converte campos para formato UNIMARC utilizando OpenAI
                 console.log("Converting filled fields to UNIMARC text format...")
                 const unimarcConversionPrompt = `Converta o seguinte objeto JSON de campos UNIMARC para o formato de texto UNIMARC.
 Regras estritas:
-1. Ignore completamente qualquer subcampo com valor "não", "nao", "n/a" ou string vazia
-2. Inclua apenas subcampos com valores válidos
-3. Campos obrigatórios sem valor válido devem ser representados com $a vazio
-4. Nunca inclua o texto "não" como valor
-5. Formato exato:
-   - Campos de controle: "001 valor"
-   - Campos de dados: "200  \$aTítulo\$bSubtítulo"
+1. Ignore completamente qualquer subcampo com valor "não", "nao", "n/a" ou string vazia.
+2. Inclua apenas subcampos com valores válidos.
+3. Campos obrigatórios sem valor válido devem ser representados com o código do subcampo e sem valor (ex: $a).
+4. Nunca inclua o texto "não" como valor.
+5. Se um CAMPO PRINCIPAL for repetível e tiver um array de objetos/valores, gere uma linha UNIMARC separada para cada item no array.
+6. Se um SUBFIELD for repetível e tiver um array de valores, concatene-os na mesma linha UNIMARC, prefixando cada valor com o seu subcampo.
 
-Exemplo:
+Exemplo de entrada com campos e subcampos repetíveis:
 {
   "001": "12345",
-  "200": {"a": "Título", "b": "não"},  // Ignorar $b
-  "101": {"a": "por", "c": "não"}       // Ignorar $c
+  "200": [{"a": "Título1", "b": "Subtítulo1"}, {"a": "Título2", "b": "não"}], // Ignorar $b na segunda ocorrência
+  "102": {"a": ["ValorA1", "ValorA2"], "b": "ValorB"}, // Subcampo 'a' repetível
+  "008": ["ValorX", "ValorY"] // Campo '008' repetível
 }
-Saída:
+
+Saída esperada:
 001 12345
-200  \$aTítulo
-101  \$apor
+200  $aTítulo1$bSubtítulo1
+200  $aTítulo2
+102  $aValorA1$aValorA2$bValorB
+008  ValorX
+008  ValorY
 
 Objeto JSON a converter:
+
+Regra adicional para subcampos: Cada subcampo é representado por '$' seguido do código do subcampo e IMEDIATAMENTE pelo seu valor. Não há espaços entre o código do subcampo e o valor, nem '$' repetidos. Ex: {"d": "valor"} deve ser convertido para "$dvalor", NÃO "$d valor" ou "$d$valor".
+
 ${JSON.stringify(state.filledFields, null, 2)}`
 
                 const unimarcCompletion = await openai.chat.completions.create({
@@ -615,7 +721,8 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                     messages: [
                         {
                             role: "system",
-                            content: "Você é um especialista em UNIMARC. Converta o JSON fornecido para o formato de texto UNIMARC EXATO, seguindo as regras estritas. Ignore valores inválidos como 'não' ou vazios.",
+                            content:
+                                "Você é um especialista em UNIMARC. Converta o JSON fornecido para o formato de texto UNIMARC EXATO, seguindo as regras estritas. Ignore valores inválidos como 'não' ou vazios.",
                         },
                         { role: "user", content: unimarcConversionPrompt },
                     ],
@@ -628,63 +735,113 @@ ${JSON.stringify(state.filledFields, null, 2)}`
 
                 // Prepara dados para persistência
                 const fieldsToSave: Array<{
-                    tag: string;
-                    value: string | null;
-                    subfields?: Prisma.JsonValue;
-                    fieldType: FieldType;
-                    fieldName: string | null;
-                    subfieldNames?: Prisma.JsonValue;
-                }> = Object.entries(state.filledFields).map(([tag, value]) => {
-                    let fieldDef
-                    if (state.currentTemplate) {
-                        fieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
-                            (f) => f.tag === tag,
-                        )
-                    } else {
-                        fieldDef = undefined
-                    }
-
-                    const fieldType = fieldDef && "subFieldDef" in fieldDef ? FieldType.DATA : FieldType.CONTROL
-                    const fieldName = fieldDef?.translations.find((t) => t.language === language)?.name || tag
-
-                    let subfieldNames: Prisma.JsonValue | undefined
-                    let fieldValue: string | null = null
-                    let subfieldValues: Prisma.JsonValue | undefined
-
-                    if (fieldType === FieldType.DATA && typeof value === "object" && value !== null) {
-                        // Filter out invalid subfields before saving
-                        const filteredSubfields: Record<string, any> = {};
-                        for (const [subcode, subvalue] of Object.entries(value)) {
-                            if (isValidFieldValue(subvalue)) {
-                                filteredSubfields[subcode] = subvalue;
-                            }
+                    tag: string
+                    value: string | null
+                    subfields?: Prisma.JsonValue
+                    fieldType: FieldType
+                    fieldName: string | null
+                    subfieldNames?: Prisma.JsonValue
+                }> = Object.entries(state.filledFields)
+                    .flatMap(([tag, value]) => {
+                        // Use flatMap para lidar com arrays
+                        let fieldDef: FieldDefinition | undefined
+                        if (state.currentTemplate) {
+                            fieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
+                                (f) => f.tag === tag,
+                            )
                         }
-                        subfieldValues = filteredSubfields as Prisma.JsonValue;
-                        const dataFieldDef = fieldDef as DataField;
-                        subfieldNames = {};
-                        dataFieldDef.subFieldDef.forEach((sf) => {
-                            const sfTranslation = sf.translations?.find((t) => t.language === language);
-                            (subfieldNames as Record<string, string>)[sf.code] = sfTranslation?.label || sf.code;
-                        });
-                    } else {
-                        fieldValue = isValidFieldValue(value) ? String(value) : null;
-                    }
+                        const fieldType = fieldDef && "subFieldDef" in fieldDef ? FieldType.DATA : FieldType.CONTROL
+                        const fieldName = fieldDef?.translations.find((t: Translation) => t.language === language)?.name || tag
 
-                    return {
-                        tag,
-                        value: fieldValue,
-                        subfields: subfieldValues,
-                        fieldType,
-                        fieldName: fieldName || null,
-                        subfieldNames,
-                    }
-                }).filter(field =>
-                    // Remove campos vazios
-                    field.value !== null ||
-                    (field.subfields && Object.keys(field.subfields as object).length > 0)
-                );
+                        if (Array.isArray(value)) {
+                            // Lida com campos repetíveis (ocorrências completas ou valores simples)
+                            return value
+                                .map((item) => {
+                                    let fieldValue: string | null = null
+                                    let subfieldValues: Prisma.JsonValue | undefined
+                                    let subfieldNames: Prisma.JsonValue | undefined
 
-                console.log("Fields to save:", fieldsToSave);
+                                    if (fieldType === FieldType.DATA && typeof item === "object" && item !== null) {
+                                        // Item é um objeto de subcampos para um campo de dados
+                                        const filteredSubfields: Record<string, any> = {}
+                                        for (const [subcode, subvalue] of Object.entries(item)) {
+                                            if (isValidFieldValue(subvalue)) {
+                                                filteredSubfields[subcode] = subvalue
+                                            }
+                                        }
+                                        subfieldValues = filteredSubfields as Prisma.JsonValue
+                                        const dataFieldDef = fieldDef as DataField
+                                        subfieldNames = {}
+                                        dataFieldDef.subFieldDef.forEach((sf) => {
+                                            const sfTranslation = sf.translations?.find((t) => t.language === language)
+                                                ; (subfieldNames as Record<string, string>)[sf.code] = sfTranslation?.label || sf.code
+                                        })
+                                    } else {
+                                        // Item é um valor simples para um campo de controlo/dados simples
+                                        fieldValue = isValidFieldValue(item) ? String(item) : null
+                                    }
+
+                                    return {
+                                        tag,
+                                        value: fieldValue,
+                                        subfields: subfieldValues,
+                                        fieldType,
+                                        fieldName: fieldName || null,
+                                        subfieldNames,
+                                    }
+                                })
+                                .filter(
+                                    (field) =>
+                                        field.value !== null || (field.subfields && Object.keys(field.subfields as object).length > 0),
+                                )
+                        } else {
+                            // Lida com campos não repetíveis (lógica atual)
+                            let fieldValue: string | null = null
+                            let subfieldValues: Prisma.JsonValue | undefined
+                            let subfieldNames: Prisma.JsonValue | undefined
+
+                            if (fieldType === FieldType.DATA && typeof value === "object" && value !== null) {
+                                const filteredSubfields: Record<string, any> = {}
+                                for (const [subcode, subvalue] of Object.entries(value)) {
+                                    // MODIFICADO: Lida com subcampos que são arrays (repetíveis)
+                                    if (Array.isArray(subvalue)) {
+                                        const validSubvalues = subvalue.filter((sv) => isValidFieldValue(sv))
+                                        if (validSubvalues.length > 0) {
+                                            filteredSubfields[subcode] = validSubvalues
+                                        }
+                                    } else if (isValidFieldValue(subvalue)) {
+                                        filteredSubfields[subcode] = subvalue
+                                    }
+                                }
+                                subfieldValues = filteredSubfields as Prisma.JsonValue
+                                const dataFieldDef = fieldDef as DataField
+                                subfieldNames = {}
+                                dataFieldDef.subFieldDef.forEach((sf) => {
+                                    const sfTranslation = sf.translations?.find((t) => t.language === language)
+                                        ; (subfieldNames as Record<string, string>)[sf.code] = sfTranslation?.label || sf.code
+                                })
+                            } else {
+                                fieldValue = isValidFieldValue(value) ? String(value) : null
+                            }
+
+                            return [
+                                {
+                                    tag,
+                                    value: fieldValue,
+                                    subfields: subfieldValues,
+                                    fieldType,
+                                    fieldName: fieldName || null,
+                                    subfieldNames,
+                                },
+                            ]
+                        }
+                    })
+                    .filter(
+                        (field) => field.value !== null || (field.subfields && Object.keys(field.subfields as object).length > 0),
+                    )
+
+                // LOG: Campos preparados para salvamento (fieldsToSave)
+                console.log("Fields prepared for saving (fieldsToSave):", JSON.stringify(fieldsToSave, null, 2))
 
                 // Persiste na base de dados
                 console.log("Saving record to database...")
@@ -703,7 +860,6 @@ ${JSON.stringify(state.filledFields, null, 2)}`
                         subfieldNames: f.subfieldNames ?? null,
                     })),
                 })
-
                 console.log("Record saved with ID:", recordId)
 
                 return NextResponse.json({
@@ -732,7 +888,6 @@ ${JSON.stringify(state.filledFields, null, 2)}`
 
         console.log("=== FALLBACK - INVALID STATE ===")
         console.log("Current step:", state.step)
-
         return NextResponse.json(
             {
                 type: "error",

@@ -1,3 +1,5 @@
+import type { FieldType, Prisma } from "@prisma/client"
+
 export interface Translation {
     id: string
     language: string
@@ -33,7 +35,6 @@ export interface SubFieldDef {
     code: string
     repeatable: boolean
     mandatory: boolean
-    // Removido 'name: string' daqui
     translations?: SubfieldDefinitionTranslation[] // <--- ADICIONADO: Array de traduções para o subcampo
     dataFieldId: string
     createdAt: string
@@ -62,12 +63,21 @@ export interface TemplatesResponse {
     templates: Template[]
 }
 
-export type ConversationStep = "template-selection" | "bulk-auto-fill" | "bulk-field-filling" | "field-filling" | "confirmation" | "completed"
+// Export FieldDefinition
+export type FieldDefinition = ControlField | DataField
+
+export type ConversationStep =
+    | "template-selection"
+    | "bulk-auto-fill"
+    | "bulk-field-filling"
+    | "field-filling"
+    | "confirmation"
+    | "completed"
 
 export interface ConversationState {
     step: ConversationStep
     currentTemplate?: Template
-    filledFields: Record<string, any>
+    filledFields: Record<string, any | any[]> // Can be a single value or an array of values/objects
     remainingFields: string[]
     askedField?: string
     askedSubfield?: string
@@ -77,6 +87,7 @@ export interface ConversationState {
         field: string
         subfield?: string
     }
+    currentRepeatOccurrence?: { tag: string; subfields: Record<string, any | any[]> } // MODIFICADO: subfields pode ser array
 }
 
 export interface CatalogRequest {
@@ -114,4 +125,23 @@ export interface CatalogResponse {
     subfieldTips?: string[]
     textUnimarc?: string
     filledFields?: Record<string, any>
+}
+
+export type RecordField = {
+    tag: string
+    value: string | null
+    subfields: Prisma.JsonValue | null
+    fieldType: FieldType
+    fieldName: string | null
+    subfieldNames: Prisma.JsonValue | null
+}
+
+export type SaveRecordPayload = {
+    templateId: string
+    templateName: string
+    templateDesc: string
+    filledFields: Record<string, any>
+    template: Template
+    textUnimarc: string
+    fields: RecordField[]
 }
