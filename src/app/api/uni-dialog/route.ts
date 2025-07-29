@@ -457,13 +457,33 @@ export async function POST(req: NextRequest) {
                     } else {
                         // Todos os subcampos para a ocorrência atual estão preenchidos
                         if (Object.keys(state.currentRepeatOccurrence?.subfields || {}).length > 0) {
-                            if (!Array.isArray(state.filledFields[state.askedField])) {
-                                state.filledFields[state.askedField] = []
+                            // Verifica se o campo principal (state.askedField) é repetível
+                            const currentFieldDefForRepeatCheck = [
+                                ...state.currentTemplate.controlFields,
+                                ...state.currentTemplate.dataFields,
+                            ].find((f) => f.tag === state.askedField)
+
+                            if (currentFieldDefForRepeatCheck?.repeatable) {
+                                // Se o campo principal é repetível
+                                if (!Array.isArray(state.filledFields[state.askedField])) {
+                                    state.filledFields[state.askedField] = []
+                                }
+                                ; (state.filledFields[state.askedField] as any[]).push(state.currentRepeatOccurrence?.subfields)
+                            } else {
+                                // Se o campo principal NÃO é repetível, atribui diretamente o objeto de subcampos
+                                state.filledFields[state.askedField] = state.currentRepeatOccurrence?.subfields
                             }
-                            ; (state.filledFields[state.askedField] as any[]).push(state.currentRepeatOccurrence?.subfields)
                             console.log(`Completed occurrence for ${state.askedField}:`, state.currentRepeatOccurrence?.subfields)
                         } else {
                             console.log(`Occurrence for ${state.askedField} has no valid subfields, not storing.`)
+                            // Se não há subcampos válidos, e o campo não é repetível, garante que não é armazenado
+                            const currentFieldDefForDeleteCheck = [
+                                ...state.currentTemplate.controlFields,
+                                ...state.currentTemplate.dataFields,
+                            ].find((f) => f.tag === state.askedField)
+                            if (currentFieldDefForDeleteCheck && !currentFieldDefForDeleteCheck.repeatable) {
+                                delete state.filledFields[state.askedField]
+                            }
                         }
                         delete state.currentRepeatOccurrence // Limpa para a próxima ocorrência
 
