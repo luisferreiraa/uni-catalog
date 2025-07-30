@@ -1,85 +1,51 @@
 "use client"
-// Esta diretiva transforma o component num Client Component
-// É necessárrio porque:
-// 1. Usamos hooks como useState e useEffect
-// 2. Temos interatividade com o utilizador
-// 3. Precisamos de acesso ao window object (indiretamente via fetch API)
-
-// Importações agrupadas por categoria
-import { useState, useEffect } from "react"   // Hooks básicos do React
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"   // Componentes de UI
-import QuestionDisplay from "@/components/question-display"   // Componente personalizado
-import type { CatalogResponse, ConversationState } from "@/app/types/unimarc"   // Tipos TypeScript
-import { Button } from "@/components/ui/button"   // Botões estilizados
-import { Input } from "@/components/ui/input"   // Campos de entrada
-import { Badge } from "@/components/ui/badge"   // Componentes de badge
-import { BookOpen } from "lucide-react"   // Ícone de livro
-
-// Tipos importados:
-// CatalogResponse: Define a estrutura das respostas da API
-// ConversationState: Controla o estado da conversa/fluxo de catalogação
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useState, useEffect } from "react"
+import QuestionDisplay from "@/components/question-display"
+import type { CatalogResponse, ConversationState } from "@/app/types/unimarc"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { BookOpen, Edit } from "lucide-react" // Importar Edit icon
 
 export default function HomePage() {
-  // Estado que armazena a resposta atual da API
-  // Tipo CatalogResponse contém todos os possíveis tipos de resposta
   const [currentResponse, setCurrentResponse] = useState<CatalogResponse | null>(null)
-
-  // Estado de loading para feedback visual durante requisições
   const [loading, setLoading] = useState(false)
-
-  // Armazena a descrição inicial do item a ser catalogado
   const [description, setDescription] = useState("")
-
-  // Armazena as respostas do utilizador durante o fluxo de perguntas
   const [userResponse, setUserResponse] = useState("")
-
-  // Controla o estado atual da conversação com a API
-  // Inclui campos preenchidos, passo atual, etc.
   const [conversationState, setConversationState] = useState<ConversationState | null>(null)
 
-  // useEffect para lidar com auto-continuação em certos estados
+  // Auto-continuação para template-selected, bulk-auto-filled, e field-auto-filled
   useEffect(() => {
-    // Logs para debugging (remover em produção)
     console.log("useEffect triggered - currentResponse:", currentResponse?.type)
     console.log("useEffect triggered - loading:", loading)
     console.log("useEffect triggered - conversationState:", conversationState?.step)
-
-    // Condições de saída antecipada
     if (loading) {
       console.log("useEffect: Skipping - already loading")
       return
     }
-
     if (!currentResponse || !conversationState) {
       console.log("useEffect: Skipping - no response or conversation state")
       return
     }
-
-    // Tipos de resposta que devem auto-confirmar
+    // Auto-continuar apenas para estes tipos de resposta
     const shouldAutoContinue = ["template-selected", "bulk-auto-filled", "field-auto-filled"].includes(
       currentResponse.type,
     )
-
     if (shouldAutoContinue) {
       console.log(`useEffect: Auto-continuing for ${currentResponse.type}`)
-
-      // Timeout para melhor experiência do utilizador (feedback visual)
       const timer = setTimeout(() => {
-        handleUserResponse()    // Chama a função principal da resposta
-      }, 1500) // 1.5 segundos
+        handleUserResponse()
+      }, 1500) // 1.5 segundos para melhor feedback visual
     }
-  }, [currentResponse, loading, conversationState])   // Dependências do efeito
+  }, [currentResponse, loading, conversationState])
 
-  // Função para iniciar o processo de catalogação
   const handleInitialRequest = async () => {
     console.log("handleInitialRequest called with description:", description)
-    setLoading(true)    // Ativa o estado de loading
-
+    setLoading(true)
     try {
       const payload = { description }
       console.log("Sending initial payload:", payload)
-
-      // Requisição para a API route do Next.js
       const res = await fetch("/api/uni-dialog", {
         method: "POST",
         headers: {
@@ -87,35 +53,29 @@ export default function HomePage() {
         },
         body: JSON.stringify(payload),
       })
-
-
       const data: CatalogResponse = await res.json()
       console.log("Received initial response:", data)
-
-      // Atualiza estados com a resposta
       setCurrentResponse(data)
       setConversationState(data.conversationState || null)
-
     } catch (error) {
       console.error("Erro ao iniciar a conversação:", error)
     } finally {
-      setLoading(false)   // Desativa loading independentemente do resultado
+      setLoading(false)
     }
   }
 
-  // Função para lidar com respostas do utilizador
-  const handleUserResponse = async (directResponse?: string) => {
+  const handleUserResponse = async (directResponse?: string, fieldToEdit?: string) => {
+    // Adicionado fieldToEdit
     console.log("handleUserResponse called with:", directResponse || userResponse)
     setLoading(true)
-
     try {
       const payload = {
         description,
         conversationState,
         userResponse: directResponse !== undefined ? directResponse : userResponse,
+        fieldToEdit, // Incluir fieldToEdit no payload
       }
       console.log("Sending payload:", payload)
-
       const res = await fetch("/api/uni-dialog", {
         method: "POST",
         headers: {
@@ -123,18 +83,14 @@ export default function HomePage() {
         },
         body: JSON.stringify(payload),
       })
-
       const data: CatalogResponse = await res.json()
       console.log("Received response:", data)
-
       setCurrentResponse(data)
       setConversationState(data.conversationState || null)
-
-      // Limpa a resposta do utilizador apenas se não for uma resposta direta
+      // Só limpa a resposta se não for uma resposta direta dos botões
       if (!directResponse) {
         setUserResponse("")
       }
-
     } catch (error) {
       console.error("Erro ao enviar resposta do utilizador:", error)
     } finally {
@@ -142,12 +98,18 @@ export default function HomePage() {
     }
   }
 
+  const handleReviewFields = () => {
+    handleUserResponse("__REVIEW_FIELDS__") // Comando especial para o backend
+  }
+
+  const handleEditField = (fieldTag: string) => {
+    handleUserResponse("__EDIT_FIELD__", fieldTag) // Comando especial e o campo a editar
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-gray-900 font-poppins">
       <div className="max-w-4xl w-full">
         <Card className="p-8 space-y-6 flex flex-col items-center bg-white rounded-xl border border-gray-200 shadow-lg min-h-[500px] justify-between">
-
-          {/* Cabeçalho */}
           <CardHeader className="w-full text-center">
             <CardTitle className="flex items-center justify-center gap-3 text-3xl font-extrabold text-gray-900">
               <BookOpen className="w-8 h-8 text-blue-600" />
@@ -155,11 +117,8 @@ export default function HomePage() {
             </CardTitle>
             <p className="text-gray-700 text-sm mt-2">Otimizado com IA para eficiência máxima</p>
           </CardHeader>
-
-          {/* Conteúdo Principal */}
           <CardContent className="space-y-6 w-full flex-grow flex flex-col justify-center">
-
-            {/* Barra de Status */}
+            {/* Status info */}
             {conversationState && (
               <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200 w-full max-w-lg mx-auto shadow-sm">
                 <div className="flex items-center justify-between text-sm">
@@ -180,10 +139,8 @@ export default function HomePage() {
                 )}
               </div>
             )}
-
-            {/* Fluxo Principal */}
+            {/* Input inicial */}
             {!currentResponse && (
-              // Estado inicial - Input de descrição
               <div className="w-full max-w-md mx-auto space-y-4">
                 <Input
                   className="shadow-sm rounded-lg border-gray-300 bg-white text-gray-900 placeholder:text-gray-500 focus:border-blue-500 focus:ring-blue-500"
@@ -201,10 +158,26 @@ export default function HomePage() {
                 </Button>
               </div>
             )}
-
-            {/* Pergunta ao utilizador */}
+            {/* Respostas e estados */}
             {currentResponse && (
               <div className="w-full max-w-lg mx-auto space-y-6">
+                {/* Botão de Revisão/Edição */}
+                {conversationState &&
+                  conversationState.step !== "template-selection" &&
+                  conversationState.step !== "completed" && (
+                    <div className="flex justify-center mt-4">
+                      <Button
+                        onClick={handleReviewFields}
+                        disabled={loading}
+                        variant="outline"
+                        className="rounded-lg border-blue-500 text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition-all duration-200 ease-in-out bg-transparent"
+                      >
+                        <Edit className="w-4 h-4 mr-2" /> Rever e Editar Campos
+                      </Button>
+                    </div>
+                  )}
+
+                {/* Pergunta ao usuário */}
                 {currentResponse.type === "field-question" && (
                   <>
                     <QuestionDisplay response={currentResponse} />
@@ -307,6 +280,51 @@ export default function HomePage() {
                         </div>
                       </div>
                     )}
+                  </Card>
+                )}
+                {/* Exibição de campos para revisão */}
+                {currentResponse.type === "review-fields-display" && (
+                  <Card className="p-4 bg-gray-50 border border-gray-200 text-blue-600 rounded-lg shadow-sm">
+                    <p className="font-semibold mb-4">Campos Preenchidos:</p>
+                    <div className="space-y-3 max-h-60 overflow-y-auto pr-2">
+                      {currentResponse.filledFields && Object.keys(currentResponse.filledFields).length > 0 ? (
+                        Object.entries(currentResponse.filledFields).map(([fieldTag, value]) => (
+                          <div
+                            key={fieldTag}
+                            className="flex items-center justify-between p-2 bg-white rounded-md border border-gray-200 shadow-sm"
+                          >
+                            <div className="flex-1">
+                              <Badge variant="secondary" className="text-xs bg-gray-200 text-gray-700 mr-2">
+                                {fieldTag}
+                              </Badge>
+                              <span className="text-sm text-gray-800">
+                                {typeof value === "object"
+                                  ? JSON.stringify(value) // Para objetos/arrays, mostra o JSON
+                                  : String(value)}
+                              </span>
+                            </div>
+                            <Button
+                              onClick={() => handleEditField(fieldTag)}
+                              variant="ghost"
+                              size="sm"
+                              className="text-blue-500 hover:bg-blue-100"
+                              disabled={loading}
+                            >
+                              Editar
+                            </Button>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-gray-600">Nenhum campo preenchido ainda.</p>
+                      )}
+                    </div>
+                    <Button
+                      onClick={() => handleUserResponse("__CONTINUE_FROM_REVIEW__")} // Comando para continuar
+                      className="mt-4 w-full rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+                      disabled={loading}
+                    >
+                      {loading ? "A continuar..." : "Continuar Catalogação"}
+                    </Button>
                   </Card>
                 )}
                 {/* Registro completo */}

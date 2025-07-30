@@ -73,6 +73,7 @@ export type ConversationStep =
     | "field-filling"
     | "confirmation"
     | "completed"
+    | "review-fields"
 
 export interface ConversationState {
     step: ConversationStep
@@ -95,6 +96,7 @@ export interface CatalogRequest {
     language?: string
     conversationState?: ConversationState
     userResponse?: string
+    fieldToEdit?: string
 }
 
 export interface CatalogResponse {
@@ -108,6 +110,7 @@ export interface CatalogResponse {
     | "template-not-found"
     | "error"
     | "repeat-confirmation"
+    | "review-fields-display"
     conversationState?: ConversationState
     template?: { id: string; name: string; description?: string }
     field?: string

@@ -45,11 +45,18 @@ function isValidFieldValue(value: any, fieldDef?: any): boolean {
 
 export async function POST(req: NextRequest) {
     try {
-        const { description, language = "pt", conversationState, userResponse }: CatalogRequest = await req.json()
+        const {
+            description,
+            language = "pt",
+            conversationState,
+            userResponse,
+            fieldToEdit,
+        }: CatalogRequest = await req.json() // Adicionado fieldToEdit
 
         console.log("=== DEBUG API CALL ===")
         console.log("Description:", description)
-        console.log("UserResponse (raw from payload):", userResponse) // NOVO LOG
+        console.log("UserResponse (raw from payload):", userResponse)
+        console.log("FieldToEdit (from payload):", fieldToEdit) // NOVO LOG
         console.log("ConversationState (received):", JSON.stringify(conversationState, null, 2))
 
         const { templates } = await templateCache.getTemplates()
@@ -78,6 +85,53 @@ export async function POST(req: NextRequest) {
         console.log("Current state (processed):", state.step)
         console.log("Filled fields (processed):", Object.keys(state.filledFields))
         console.log("Remaining fields (processed):", state.remainingFields)
+
+        // ============================================
+        // Lógica de Revisão/Edição de Campos (NOVO)
+        // ============================================
+        if (userResponse === "__REVIEW_FIELDS__") {
+            console.log("=== ENTERING REVIEW FIELDS MODE ===")
+            state.step = "review-fields"
+            console.log("DEBUG: State after entering review mode:", JSON.stringify(state, null, 2)) // NOVO LOG
+            return NextResponse.json({
+                type: "review-fields-display",
+                filledFields: state.filledFields,
+                conversationState: state,
+            } as CatalogResponse)
+        }
+
+        if (userResponse === "__EDIT_FIELD__" && fieldToEdit) {
+            console.log(`=== PROCESSING EDIT FIELD COMMAND: ${fieldToEdit} ===`)
+            console.log("DEBUG: State BEFORE edit processing:", JSON.stringify(state, null, 2)) // NOVO LOG
+            // Remove o campo dos filledFields para que possa ser preenchido novamente
+            delete state.filledFields[fieldToEdit]
+            // Adiciona o campo de volta aos remainingFields (se não estiver lá)
+            // Certifica-se de que o campo a ser editado é o primeiro na lista de remainingFields
+            state.remainingFields = state.remainingFields.filter((f) => f !== fieldToEdit) // Remove se já estiver
+            state.remainingFields.unshift(fieldToEdit) // Adiciona no início
+
+            // Redefine o estado para perguntar este campo
+            state.askedField = fieldToEdit
+            state.askedSubfield = undefined // Começa do primeiro subcampo, se houver
+            state.repeatingField = false
+            state.currentRepeatOccurrence = undefined
+            state.step = "field-filling" // Volta para o passo de preenchimento individual
+            console.log(`DEBUG: Field ${fieldToEdit} removed from filledFields and added to remainingFields.`)
+            console.log("DEBUG: State AFTER edit processing:", JSON.stringify(state, null, 2))
+            // Não retorna aqui, deixa o fluxo continuar para a lógica de field-filling para perguntar o campo.
+        }
+
+        if (userResponse === "__CONTINUE_FROM_REVIEW__") {
+            console.log("=== CONTINUING FROM REVIEW MODE ===")
+            // Se todos os campos já estavam preenchidos, vai para confirmação, senão continua a preencher
+            if (state.remainingFields.length === 0) {
+                state.step = "confirmation"
+            } else {
+                state.step = "field-filling"
+            }
+            console.log("DEBUG: State after continuing from review:", JSON.stringify(state, null, 2)) // NOVO LOG
+            // Não retorna aqui, deixa o fluxo continuar para a lógica de field-filling ou confirmation.
+        }
 
         // ============================================
         // ETAPA 1: Seleção de Template
@@ -350,6 +404,9 @@ export async function POST(req: NextRequest) {
             console.log("Currently asked field:", state.askedField)
             console.log("User response received:", userResponse)
 
+            // Verifica se a userResponse é um comando especial que já foi tratado
+            const isSpecialCommand = ["__EDIT_FIELD__", "__CONTINUE_FROM_REVIEW__"].includes(userResponse || "")
+
             // 1. Processa resposta do utilizador a uma CONFIRMAÇÃO de repetição (se existir)
             if (state.repeatConfirmation && userResponse !== undefined && userResponse !== null) {
                 const wantsToRepeat = userResponse.trim().toLowerCase() === "sim"
@@ -399,17 +456,20 @@ export async function POST(req: NextRequest) {
                 }
                 // Após processar a confirmação, a userResponse foi consumida para esta iteração.
                 // O loop 'while' abaixo determinará a próxima pergunta.
-            } else if (state.askedField && userResponse !== undefined && userResponse !== null) {
-                // 2. Processa resposta do utilizador a uma PERGUNTA de campo (se existir e não for uma resposta de confirmação)
+            }
+            // 2. Processa resposta do utilizador a uma PERGUNTA de campo (se existir e NÃO for um comando especial)
+            else if (state.askedField && userResponse !== undefined && userResponse !== null && !isSpecialCommand) {
                 const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
                     (f) => f.tag === state.askedField,
                 )
                 const isCurrentFieldRepeatable = currentFieldDef?.repeatable
                 const trimmedResponse = typeof userResponse === "string" ? userResponse.trim() : ""
 
-                // 1. Adicione estes logs logo após a linha `const trimmedResponse = typeof userResponse === "string" ? userResponse.trim() : "";`
-                console.log("UserResponse (raw from payload):", userResponse)
-                console.log("Trimmed response:", trimmedResponse)
+                // NOVO LOGS: Detalhes da resposta do utilizador
+                console.log(
+                    `Processing user response for ${state.askedField}${state.askedSubfield ? "$" + state.askedSubfield : ""}. Raw response: "${userResponse}"`,
+                )
+                console.log(`Trimmed response: "${trimmedResponse}"`)
                 const shouldStoreValue = isValidFieldValue(trimmedResponse, currentFieldDef)
                 console.log(`isValidFieldValue result for "${trimmedResponse}": ${shouldStoreValue}`)
 
@@ -440,15 +500,8 @@ export async function POST(req: NextRequest) {
                         }
                         console.log(`User response for ${state.askedField}$${state.askedSubfield}: ${trimmedResponse}`)
                     } else {
-                        // 2. Dentro do bloco `if (currentFieldDef && "subFieldDef" in currentFieldDef ...)` (para campos de dados com subcampos), localize o `else {` do `if (shouldStoreValue) {` e adicione os logs:
-                        // Onde está:
-                        // } else {
-                        //   if (!currentSubfieldDef?.repeatable) {
-                        //     delete (state.currentRepeatOccurrence.subfields as Record<string, any>)[state.askedSubfield!];
-                        //   }
-                        //   console.log(`Subcampo ${state.askedField}$${state.askedSubfield} deixado em branco`);
-                        // }
-                        // Mude para:
+                        // Se o valor for inválido, para subcampos NÃO repetíveis, remove-o.
+                        // Para subcampos repetíveis, simplesmente não adiciona o valor inválido.
                         console.log(
                             `Value for ${state.askedField}$${state.askedSubfield} is invalid. Current subfield repeatable: ${currentSubfieldDef?.repeatable}.`,
                         )
@@ -537,7 +590,7 @@ export async function POST(req: NextRequest) {
                         delete state.askedField
                         delete state.askedSubfield
                         state.repeatingField = false // Reinicia repeatingField se o campo principal estiver concluído
-                        console.log(`All subfields for ${dataFieldDef.tag} filled. Remaining main fields:`, state.remainingFields) // NOVO LOG
+                        console.log(`All subfields for ${dataFieldDef.tag} filled. Remaining main fields:`, state.remainingFields)
                     }
                 } else {
                     // Campo simples (sem subcampos)
@@ -553,15 +606,6 @@ export async function POST(req: NextRequest) {
                             console.log(`Field ${currentFieldDef?.tag} filled: ${trimmedResponse}`)
                         }
                     } else {
-                        // 4. Dentro do bloco `else {` (para campos simples, sem subcampos), localize o `else {` do `if (shouldStoreValue) {` e adicione os logs:
-                        // Onde está:
-                        // } else {
-                        //   if (!isCurrentFieldRepeatable) {
-                        //     delete state.filledFields[state.askedField];
-                        //   }
-                        //   console.log(`Campo ${state.askedField} deixado em branco`);
-                        // }
-                        // Mude para:
                         console.log(
                             `Value for ${state.askedField} is invalid. Current field repeatable: ${isCurrentFieldRepeatable}.`,
                         )
@@ -593,19 +637,19 @@ export async function POST(req: NextRequest) {
                     delete state.askedField
                     delete state.askedSubfield
                     state.repeatingField = false // Reinicia repeatingField
-                    console.log(`Field ${currentFieldDef?.tag} processed. Remaining main fields:`, state.remainingFields) // NOVO LOG
+                    console.log(`Field ${currentFieldDef?.tag} processed. Remaining main fields:`, state.remainingFields)
                 }
-                // NEW LOG: Log state.filledFields after processing user response
+                // NEW LOG: Log state.filledFields after user response processing
                 console.log("State.filledFields after user response processing:", JSON.stringify(state.filledFields, null, 2))
             }
 
             // 3. Processa o próximo campo/subcampo a ser perguntado
+            console.log("DEBUG: Entering field-filling loop determination.") // NOVO LOG
+            console.log("DEBUG: state.askedField at loop start:", state.askedField) // NOVO LOG
+            console.log("DEBUG: state.remainingFields at loop start:", state.remainingFields) // NOVO LOG
             while (state.remainingFields.length > 0 || (state.askedField && state.askedSubfield)) {
                 const currentFieldTag = state.askedField || state.remainingFields[0]
-                // NEW LOG: Log currentFieldTag being processed
-                console.log(
-                    `Determining next field to ask. Current field tag: ${currentFieldTag}. Remaining fields: ${state.remainingFields.length}`,
-                )
+                console.log("DEBUG: currentFieldTag determined as:", currentFieldTag) // NOVO LOG
 
                 const currentFieldDef = [...state.currentTemplate.controlFields, ...state.currentTemplate.dataFields].find(
                     (f) => f.tag === currentFieldTag,
