@@ -10,55 +10,80 @@ import type {
     DataField,
     SubFieldDef,
     Translation,
-    FieldDefinition, // Importar FieldDefinition
+    FieldDefinition,
 } from "@/app/types/unimarc"
 import { databaseService } from "@/lib/database"
 import { FieldType, type Prisma } from "@prisma/client"
 
+// Configuração do runtime para Node.js (necessário para usar OpenAI)
 export const runtime = "nodejs"
 
+// Inicialização do cliente OpenAI com a chave da API
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 })
 
-// MODIFICADO: isValidFieldValue para lidar com arrays (subcampos repetíveis)
-function isValidFieldValue(value: any, fieldDef?: any): boolean {
+/**
+ * Função para validar valores de campos/ subcampos
+ * Modificada para lidar com arrays (subcampos repetíveis)
+ * 
+ * @param value - Valor a ser validado (pode ser string, objeto ou array)
+ * @param fieldDef - Definição do campo (opcional)
+ * @returns boolean - True se o valor for válido
+ */
+export function isValidFieldValue(value: any, fieldDef?: any): boolean {
+    // Valores undefined ou null são sempre inválidos
     if (value === undefined || value === null) return false
+
+    // Para strings: verifica se está vazia ou contém valores inválidos
     if (typeof value === "string") {
         const trimmed = value.trim()
         if (trimmed.length === 0) return false
         if (["n/a", "não se aplica", "não", "nao", "-", "none", "null"].includes(trimmed.toLowerCase())) {
-            return fieldDef?.mandatory // Only accept if field is mandatory
+            return fieldDef?.mandatory // Aceita apenas se o campo for obrigatório
         }
         return true
     }
+
+    // Para arrays: verifica se pelo menos um item é válido
     if (Array.isArray(value)) {
-        // This branch is for when 'value' itself is an array (e.g., a repeatable simple field, or a repeatable subfield's value)
         return value.some((item) => isValidFieldValue(item, fieldDef))
     }
+
+    // Para objetos: verifica se pelo menos um valor é válido
     if (typeof value === "object") {
-        // This branch is for when 'value' is an object (e.g., subfields of a data field)
         return Object.values(value).some((v) => isValidFieldValue(v, fieldDef))
     }
+
+    // Qualquer outro tipo é considerado inválido
     return false
 }
 
+/**
+ * Endpoint POST principal para o processo de catalogação
+ * 
+ * @param req - NextRequest que contém os dados da requisição
+ * @returns NextResponse com a resposta da catalogação
+ */
 export async function POST(req: NextRequest) {
     try {
+        // Extrai os dados da requisição
         const {
-            description,
-            language = "pt",
-            conversationState,
-            userResponse,
-            fieldToEdit,
-        }: CatalogRequest = await req.json() // Adicionado fieldToEdit
+            description,    // Descrição do item a catalogar
+            language = "pt",    // Idioma padrão 'pt'
+            conversationState,  // Estado atual da conversação
+            userResponse,   // Resposta do utilizador (se aplicável)
+            fieldToEdit,    // Campo a editar (novo parâmetro)
+        }: CatalogRequest = await req.json()
 
+        // Logs de depuração para acompanhar a execução
         console.log("=== DEBUG API CALL ===")
         console.log("Description:", description)
         console.log("UserResponse (raw from payload):", userResponse)
         console.log("FieldToEdit (from payload):", fieldToEdit) // NOVO LOG
         console.log("ConversationState (received):", JSON.stringify(conversationState, null, 2))
 
+        // Obtém os templates disponíveis do cache
         const { templates } = await templateCache.getTemplates()
         if (templates.length === 0) {
             return NextResponse.json(
@@ -70,8 +95,9 @@ export async function POST(req: NextRequest) {
             )
         }
 
+        // Inicializa ou clona o estado da conversação
         const state: ConversationState = conversationState
-            ? JSON.parse(JSON.stringify(conversationState))
+            ? JSON.parse(JSON.stringify(conversationState)) // Deep clone
             : {
                 step: "template-selection",
                 filledFields: {},
@@ -82,17 +108,18 @@ export async function POST(req: NextRequest) {
                 currentRepeatOccurrence: undefined,
             }
 
+        // Logs do estado processado
         console.log("Current state (processed):", state.step)
         console.log("Filled fields (processed):", Object.keys(state.filledFields))
         console.log("Remaining fields (processed):", state.remainingFields)
 
         // ============================================
-        // Lógica de Revisão/Edição de Campos (NOVO)
+        // Lógica de Revisão/Edição de Campos
         // ============================================
         if (userResponse === "__REVIEW_FIELDS__") {
             console.log("=== ENTERING REVIEW FIELDS MODE ===")
             state.step = "review-fields"
-            console.log("DEBUG: State after entering review mode:", JSON.stringify(state, null, 2)) // NOVO LOG
+            console.log("DEBUG: State after entering review mode:", JSON.stringify(state, null, 2))
             return NextResponse.json({
                 type: "review-fields-display",
                 filledFields: state.filledFields,
@@ -100,37 +127,38 @@ export async function POST(req: NextRequest) {
             } as CatalogResponse)
         }
 
+        // Lógica para edição de campo específico
         if (userResponse === "__EDIT_FIELD__" && fieldToEdit) {
             console.log(`=== PROCESSING EDIT FIELD COMMAND: ${fieldToEdit} ===`)
-            console.log("DEBUG: State BEFORE edit processing:", JSON.stringify(state, null, 2)) // NOVO LOG
-            // Remove o campo dos filledFields para que possa ser preenchido novamente
-            delete state.filledFields[fieldToEdit]
-            // Adiciona o campo de volta aos remainingFields (se não estiver lá)
-            // Certifica-se de que o campo a ser editado é o primeiro na lista de remainingFields
-            state.remainingFields = state.remainingFields.filter((f) => f !== fieldToEdit) // Remove se já estiver
-            state.remainingFields.unshift(fieldToEdit) // Adiciona no início
+            console.log("DEBUG: State BEFORE edit processing:", JSON.stringify(state, null, 2))
 
-            // Redefine o estado para perguntar este campo
+            // Remove o campo dos campos preenchidos
+            delete state.filledFields[fieldToEdit]
+
+            // Adiciona o campo de volta aos campos restante (no início)
+            state.remainingFields = state.remainingFields.filter((f) => f !== fieldToEdit)
+            state.remainingFields.unshift(fieldToEdit)
+
+            // Prepara o estado para perguntar este campo novamente
             state.askedField = fieldToEdit
-            state.askedSubfield = undefined // Começa do primeiro subcampo, se houver
+            state.askedSubfield = undefined
             state.repeatingField = false
             state.currentRepeatOccurrence = undefined
-            state.step = "field-filling" // Volta para o passo de preenchimento individual
+            state.step = "field-filling"
+
             console.log(`DEBUG: Field ${fieldToEdit} removed from filledFields and added to remainingFields.`)
             console.log("DEBUG: State AFTER edit processing:", JSON.stringify(state, null, 2))
-            // Não retorna aqui, deixa o fluxo continuar para a lógica de field-filling para perguntar o campo.
         }
 
+        // Continuação para revisão
         if (userResponse === "__CONTINUE_FROM_REVIEW__") {
             console.log("=== CONTINUING FROM REVIEW MODE ===")
-            // Se todos os campos já estavam preenchidos, vai para confirmação, senão continua a preencher
             if (state.remainingFields.length === 0) {
                 state.step = "confirmation"
             } else {
                 state.step = "field-filling"
             }
-            console.log("DEBUG: State after continuing from review:", JSON.stringify(state, null, 2)) // NOVO LOG
-            // Não retorna aqui, deixa o fluxo continuar para a lógica de field-filling ou confirmation.
+            console.log("DEBUG: State after continuing from review:", JSON.stringify(state, null, 2))
         }
 
         // ============================================
@@ -138,6 +166,8 @@ export async function POST(req: NextRequest) {
         // ============================================
         if (state.step === "template-selection") {
             console.log("=== INICIANDO SELEÇÃO DE TEMPLATE ===")
+
+            // Constrói o prompt para selação de template
             const { prompt, systemMessage, maxTokens, temperature, model } = promptOptimizer.buildPrompt(
                 "template-selection",
                 description,
@@ -150,6 +180,7 @@ export async function POST(req: NextRequest) {
                 templates.map((t) => t.name),
             )
 
+            // Chama a API da OpenAI para selecionar o template
             const completion = await openai.chat.completions.create({
                 model,
                 messages: [
@@ -160,12 +191,14 @@ export async function POST(req: NextRequest) {
                 max_tokens: maxTokens,
             })
 
+            // Processa a resposta da OpenAI
             const templateName = completion.choices[0]?.message?.content?.trim()
             console.log("OpenAI selected template:", templateName)
 
             const selectedTemplate = templates.find((t) => t.name === templateName)
             console.log("Found template:", selectedTemplate ? selectedTemplate.name : "NOT FOUND")
 
+            // Se o template for encontrado, retorna opções
             if (!selectedTemplate) {
                 console.log("=== TEMPLATE NOT FOUND - RETURNING OPTIONS ===")
                 return NextResponse.json(
@@ -178,6 +211,7 @@ export async function POST(req: NextRequest) {
                 )
             }
 
+            // Prepara a resposta com o template selecionado
             console.log("=== TEMPLATE SELECTED - ADVANCING TO BULK AUTO-FILL ===")
             console.log("Selected template ID:", selectedTemplate.id)
             console.log("Selected template name:", selectedTemplate.name)
