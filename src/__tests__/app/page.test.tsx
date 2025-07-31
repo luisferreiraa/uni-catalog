@@ -193,13 +193,116 @@ describe("HomePage", () => {
         }
 
         // Simulate previous steps
+        mockFetch({ type: "template-selected", conversationState: { step: "bulk-auto-fill" } as ConversationState })
+        mockFetch({ type: "bulk-auto-filled", conversationState: { step: "field-filling" } as ConversationState })
+        mockFetch(mockFieldQuestionResponse)    // Current State: asking for 200$a
 
+        render(<HomePage />)
+        fireEvent.click(screen.getByRole("button", { name: /Iniciar Catalogação/i }))
+        jest.advanceTimersByTime(1500)  // Auto-continue
+        jest.advanceTimersByTime(1500)  // Auto-continue
 
+        await waitFor(() => {
+            expect(screen.getByRole("button", { name: /Rever e Editar Campos/i })).toBeInTheDocument()
+        })
 
+        mockFetch(mockReviewFieldsResponse)
+        fireEvent.click(screen.getByRole("button", { name: /Rever e Editar Campos/i }))
+
+        await waitFor(() => {
+            expect(screen.getByText(/Campos Preenchidos:/i)).toBeInTheDocument()
+            expect(screen.getByText(/001/i)).toBeInTheDocument()
+            expect(screen.getByText(/12345/i)).toBeInTheDocument()
+            expect(screen.getByText(/200/i)).toBeInTheDocument()
+            expect(screen.getByText(/{"a":"Título"}/i)).toBeInTheDocument() // JSON stringified
+            expect(screen.getByRole("button", { name: /Continuar Catalogação/i })).toBeInTheDocument()
+        })
     })
 
+    it("should allow editing a field from review mode", async () => {
+        const mockReviewFieldsResponse: CatalogResponse = {
+            type: "review-fields-display",
+            filledFields: { "001": "OLD_VALUE", "200": { a: "Título" } },
+            conversationState: {
+                step: "review-fields",
+                filledFields: { "001": "OLD_VALUE", "200": { a: "Título" } },
+                remainingFields: ["200"],
+            } as ConversationState,
+        }
 
+        const mockEditFieldResponse: CatalogResponse = {
+            type: "field-question",
+            field: "001",
+            question: "Por favor, forneça: Identificador [001] (obrigatório).",
+            tips: [],
+            subfieldTips: [],
+            conversationState: {
+                step: "field-filling",
+                filledFields: { "200": { a: "Título" } }, // 001 removed
+                remainingFields: ["001", "200"], // 001 added back to remaining
+                askedField: "001",
+            } as ConversationState,
+        }
 
+        // Simulate previous steps leading to review mode
+        mockFetch({ type: "template-selected", conversationState: { step: "bulk-auto-fill" } as ConversationState })
+        mockFetch({ type: "bulk-auto-filled", conversationState: { step: "field-filling" } as ConversationState })
+        mockFetch({ type: "field-question", conversationState: { step: "field-filling" } as ConversationState }) // Just to get to a state where review button appears
+        mockFetch(mockReviewFieldsResponse) // Trigger review mode
 
+        render(<HomePage />)
+        fireEvent.click(screen.getByRole("button", { name: /Iniciar Catalogação/i }))
+        jest.advanceTimersByTime(1500) // Auto-continue
+        jest.advanceTimersByTime(1500) // Auto-continue
+        jest.advanceTimersByTime(1500) // Auto-continue
+        fireEvent.click(screen.getByRole("button", { name: /Rever e Editar Campos/i }))
 
+        await waitFor(() => {
+            expect(screen.getByText(/OLD_VALUE/i)).toBeInTheDocument()
+            expect(screen.getAllByRole("button", { name: /Editar/i })[0]).toBeInTheDocument()
+        })
+
+        mockFetch(mockEditFieldResponse)
+        fireEvent.click(screen.getAllByRole("button", { name: /Editar/i })[0]) // Click edit for 001
+
+        await waitFor(() => {
+            expect(screen.getByText(/Por favor, forneça: Identificador \[001\] $$obrigatório$$./i)).toBeInTheDocument()
+            expect(screen.getByPlaceholderText(/A sua resposta.../i)).toBeInTheDocument()
+            expect(fetch).toHaveBeenCalledWith(
+                "/api/uni-dialog",
+                expect.objectContaining({
+                    body: expect.stringContaining('"userResponse":"__EDIT_FIELD__","fieldToEdit":"001"'),
+                }),
+            )
+        })
+    })
+
+    it("should display record saved message and UNIMARC text", async () => {
+        const mockRecordSavedResponse: CatalogResponse = {
+            type: "record-saved",
+            message: "Registo gravado com sucesso! ID: record123.",
+            recordId: "record123",
+            textUnimarc: "001 12345\n200 $aTítulo",
+            conversationState: { step: "completed" } as ConversationState,
+        }
+
+        // Simulate previous steps leading to record-complete, then user confirms
+        mockFetch({ type: "template-selected", conversationState: { step: "bulk-auto-fill" } as ConversationState })
+        mockFetch({ type: "bulk-auto-filled", conversationState: { step: "field-filling" } as ConversationState })
+        mockFetch({ type: "record-complete", conversationState: { step: "confirmation" } as ConversationState })
+        mockFetch(mockRecordSavedResponse) // User confirms
+
+        render(<HomePage />)
+        fireEvent.click(screen.getByRole("button", { name: /Iniciar Catalogação/i }))
+        jest.advanceTimersByTime(1500) // Auto-continue
+        jest.advanceTimersByTime(1500) // Auto-continue
+        fireEvent.click(screen.getByRole("button", { name: /Confirmar e Gravar/i }))
+
+        await waitFor(() => {
+            expect(screen.getByText(/Registo gravado com sucesso! ID: record123./i)).toBeInTheDocument()
+            expect(screen.getByText(/UNIMARC gerado:/i)).toBeInTheDocument()
+            expect(screen.getByText(/001 12345\n200 \$aTítulo/i)).toBeInTheDocument()
+            expect(screen.getByRole("button", { name: /Iniciar Nova Catalogação/i })).toBeInTheDocument()
+        })
+    })
 })
