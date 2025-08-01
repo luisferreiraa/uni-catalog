@@ -1,4 +1,4 @@
-import { POST } from "@/app/api/catalog/route"
+import { POST } from "@/app/api/uni-dialog/route"
 import { templateCache } from "@/lib/template-cache"
 import { promptOptimizer } from "@/lib/prompt-optimizer"
 import { databaseService } from "@/lib/database"
@@ -6,7 +6,6 @@ import OpenAI from "openai"
 import type { CatalogResponse, Template } from "@/app/types/unimarc"
 
 // Mock das dependências externas
-jest.mock("openai")
 jest.mock("@/lib/template-cache")
 jest.mock("@/lib/prompt-optimizer")
 jest.mock("@/lib/database")
@@ -16,7 +15,19 @@ jest.mock("next/server", () => ({
     },
 }))
 
-const mockOpenAI = OpenAI as jest.MockedClass<typeof OpenAI>
+const mockChatCompletionsCreate = jest.fn()
+
+jest.mock("openai", () => {
+    return jest.fn(() => {
+        chat: {
+            completions: {
+                create: mockChatCompletionsCreate
+            }
+        }
+    })
+})
+
+
 const mockTemplateCache = templateCache as jest.Mocked<typeof templateCache>
 const mockPromptOptimizer = promptOptimizer as jest.Mocked<typeof promptOptimizer>
 const mockDatabaseService = databaseService as jest.Mocked<typeof databaseService>
@@ -144,7 +155,7 @@ describe("Catalog API Route (POST)", () => {
             temperature: 0.5,
             model: "gpt-4o",
         })
-        mockOpenAI.chat.completions.create.mockResolvedValue({
+        mockChatCompletionsCreate.mockResolvedValue({
             choices: [{ message: { content: "mock response" } }],
             id: "chatcmpl-123",
             created: 123,
@@ -155,7 +166,7 @@ describe("Catalog API Route (POST)", () => {
     })
 
     it("should select a template and transition to bulk-auto-fill", async () => {
-        mockOpenAI.chat.completions.create.mockResolvedValueOnce({
+        mockChatCompletionsCreate.mockResolvedValueOnce({
             choices: [{ message: { content: "Livro" } }],
             id: "chatcmpl-123",
             created: 123,
@@ -175,11 +186,11 @@ describe("Catalog API Route (POST)", () => {
         expect(data.template?.name).toBe("Livro")
         expect(mockTemplateCache.getTemplates).toHaveBeenCalledTimes(1)
         expect(mockPromptOptimizer.buildPrompt).toHaveBeenCalledWith("template-selection", "um livro", expect.any(Object))
-        expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(1)
+        expect(mockChatCompletionsCreate).toHaveBeenCalledTimes(1)
     })
 
     it("should handle bulk auto-fill and transition to field-filling", async () => {
-        mockOpenAI.chat.completions.create.mockResolvedValueOnce({
+        mockChatCompletionsCreate.mockResolvedValueOnce({
             choices: [{ message: { content: '{"001": "12345", "101": {"a": "por"}}' } }],
             id: "chatcmpl-123",
             created: 123,
@@ -375,7 +386,7 @@ describe("Catalog API Route (POST)", () => {
     })
 
     it("should save the record and return record-saved type", async () => {
-        mockOpenAI.chat.completions.create.mockResolvedValueOnce({
+        mockChatCompletionsCreate.mockResolvedValueOnce({
             choices: [{ message: { content: "001 12345\n200 $aTítulo$fAutor" } }],
             id: "chatcmpl-123",
             created: 123,
@@ -416,7 +427,7 @@ describe("Catalog API Route (POST)", () => {
     })
 
     it("should handle template not found", async () => {
-        mockOpenAI.chat.completions.create.mockResolvedValueOnce({
+        mockChatCompletionsCreate.mockResolvedValueOnce({
             choices: [{ message: { content: "Template Inexistente" } }],
             id: "chatcmpl-123",
             created: 123,
