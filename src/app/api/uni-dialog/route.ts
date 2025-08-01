@@ -14,6 +14,7 @@ import type {
 } from "@/app/types/unimarc"
 import { databaseService } from "@/lib/database"
 import { FieldType, type Prisma } from "@prisma/client"
+import { isValidFieldValue } from "@/lib/is-valid-field-value"
 
 // Configuração do runtime para Node.js (necessário para usar OpenAI)
 export const runtime = "nodejs"
@@ -31,7 +32,7 @@ const openai = new OpenAI({
  * @param fieldDef - Definição do campo (opcional)
  * @returns boolean - True se o valor for válido
  */
-export function isValidFieldValue(value: any, fieldDef?: any): boolean {
+/* export function isValidFieldValue(value: any, fieldDef?: any): boolean {
     // Valores undefined ou null são sempre inválidos
     if (value === undefined || value === null) return false
 
@@ -57,7 +58,7 @@ export function isValidFieldValue(value: any, fieldDef?: any): boolean {
 
     // Qualquer outro tipo é considerado inválido
     return false
-}
+} */
 
 /**
  * Endpoint POST principal para o processo de catalogação

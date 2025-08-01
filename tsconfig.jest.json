@@ -2,30 +2,37 @@
     "extends": "./tsconfig.json",
     "compilerOptions": {
         "jsx": "react-jsx",
+        "module": "ESNext",
+        "target": "ES2019",
         "esModuleInterop": true,
-        "allowJs": true,
-        "noEmit": true,
+        "allowSyntheticDefaultImports": true,
         "isolatedModules": true,
+        "noEmit": true,
         "types": [
             "jest",
-            "node",
-            "@testing-library/jest-dom"
-        ]
+            "@testing-library/jest-dom",
+            "node"
+        ],
+        "baseUrl": ".",
+        "paths": {
+            "@/*": [
+                "./*"
+            ]
+        }
     },
     "include": [
         "**/*.ts",
         "**/*.tsx",
         "**/*.js",
         "**/*.jsx",
-        "**/*.d.ts",
-        "jest.config.js",
-        "jest.setup.js",
+        "jest.setup.ts", // Certifique-se de que está .ts aqui
         "__tests__/**/*.ts",
-        "__tests__/**/*.tsx"
+        "__tests__/**/*.tsx",
+        "__tests__/**/*.js",
+        "__tests__/**/*.jsx"
     ],
     "exclude": [
         "node_modules",
-        ".next",
-        "out"
+        ".next"
     ]
 }

@@ -1,4 +1,4 @@
-import { isValidFieldValue } from "@/app/api/uni-dialog/route"
+import { isValidFieldValue } from "@/lib/is-valid-field-value"
 
 describe("isValidFieldValue", () => {
     // Mock de um fieldDef para testes de obrigatoriedade

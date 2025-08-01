@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="7" failures="0" errors="0" time="3.311">
+  <testsuite name="isValidFieldValue" errors="0" failures="0" skipped="0" timestamp="2025-08-01T10:58:46" time="0.884" tests="7">
+    <testcase classname="isValidFieldValue should return false or undefined, null, or empty string" name="isValidFieldValue should return false or undefined, null, or empty string" time="0.007">
+    </testcase>
+    <testcase classname="isValidFieldValue should return true for valid non-empty strings" name="isValidFieldValue should return true for valid non-empty strings" time="0">
+    </testcase>
+    <testcase classname="isValidFieldValue should handle &quot;não&quot; and similar values correctly for optional fields" name="isValidFieldValue should handle &quot;não&quot; and similar values correctly for optional fields" time="0.002">
+    </testcase>
+    <testcase classname="isValidFieldValue shouuld handle &quot;não&quot; and similar values correctly for mandatory fields" name="isValidFieldValue shouuld handle &quot;não&quot; and similar values correctly for mandatory fields" time="0.001">
+    </testcase>
+    <testcase classname="isValidFieldValue should return true if any item in an array is valid" name="isValidFieldValue should return true if any item in an array is valid" time="0.001">
+    </testcase>
+    <testcase classname="isValidFieldValue should return true if any value in an object is valid" name="isValidFieldValue should return true if any value in an object is valid" time="0">
+    </testcase>
+    <testcase classname="isValidFieldValue should handle nested structures" name="isValidFieldValue should handle nested structures" time="0.001">
+    </testcase>
+  </testsuite>
+</testsuites>

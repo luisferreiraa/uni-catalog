@@ -1,37 +1,34 @@
-const nextJest = require('next/jest');
+// jest.config.js
+const path = require("path") // Importar o módulo 'path'
 
-const createJestConfig = nextJest({
-    // Provide the path to your Next.js app to load next.config.js and .env files in your test environment
-    dir: './',
-});
-
-// Add any custom config to be passed to Jest
 const customJestConfig = {
-    setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
-    testEnvironment: 'jest-environment-jsdom',
+    rootDir: __dirname, // Garante que os caminhos são resolvidos a partir da raiz do projeto
+    setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
+    testEnvironment: "jest-environment-jsdom",
     moduleNameMapper: {
-        '^@/(.*)$': '<rootDir>/$1',
+        '^@/(.*)$': '<rootDir>/src/$1'
     },
+    // Garante que ts-jest transforma ficheiros .ts e .tsx
     transform: {
-        '^.+\\.(ts|tsx)$': 'ts-jest',
+        "^.+\\.(ts|tsx)$": "ts-jest",
     },
-    globals: {
-        'ts-jest': {
-            tsconfig: '<rootDir>/tsconfig.jest.json', // Use a specific tsconfig for Jest
-        },
+    // Adicione esta linha para garantir que o Jest sabe quais extensões de ficheiro procurar
+    moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
+    transform: {
+        '^.+\\.(ts|tsx)$': ['ts-jest', { tsconfig: 'tsconfig.json', jsx: 'react-jsx' }]
     },
-    testPathIgnorePatterns: ['/node_modules/', '/.next/'],
+    testPathIgnorePatterns: ["/node_modules/", "/.next/"],
     collectCoverageFrom: [
-        'app/**/*.{ts,tsx}',
-        'components/**/*.{ts,tsx}',
-        'lib/**/*.{ts,tsx}',
-        '!app/layout.tsx', // Exclude layout as it's usually boilerplate
-        '!app/globals.css', // Exclude CSS
-        '!lib/template-cache.ts', // Exclude as it's a simple cache, not complex logic
-        '!lib/prompt-optimizer.ts', // Exclude as it's mostly string concatenation
-        '!lib/database.ts', // Exclude as it's an external dependency wrapper
+        "app/**/*.{ts,tsx}",
+        "components/**/*.{ts,tsx}",
+        "lib/**/*.{ts,tsx}",
+        "!app/layout.tsx",
+        "!app/globals.css",
+        "!lib/template-cache.ts",
+        "!lib/prompt-optimizer.ts",
+        "!lib/database.ts",
     ],
-};
+    reporters: ["default", ["jest-junit", { outputDirectory: "test-results", outputName: "junit.xml" }]],
+}
 
-// createJestConfig is exported this way to ensure that next/jest can load the Next.js config which is async
-module.exports = createJestConfig(customJestConfig);
+module.exports = customJestConfig
