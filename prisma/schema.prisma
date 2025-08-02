@@ -13,6 +13,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum PersonRole {
+  AUTHOR
+  TRANSLATOR
+  COMPOSER
+  INTERPRETER
+  ILLUSTRATOR
+  EDITOR
+  OTHER
+}
+
 model CatalogRecord {
   id               String         @id @default(cuid())
   templateName     String
@@ -22,6 +32,7 @@ model CatalogRecord {
   updatedAt        DateTime       @updatedAt
   fields           CatalogField[]
   textUnimarc      String?
+  RecordPerson     RecordPerson[]
 }
 
 model CatalogField {
@@ -45,4 +56,26 @@ model CatalogField {
 enum FieldType {
   CONTROL
   DATA
+}
+
+model Person {
+  id           String         @id @default(cuid())
+  name         String         @unique
+  type         PersonRole
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  RecordPerson RecordPerson[]
+}
+
+model RecordPerson {
+  id        String     @id @default(cuid())
+  recordId  String
+  personId  String
+  role      PersonRole
+  createdAt DateTime   @default(now())
+
+  record CatalogRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  person Person        @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([recordId, personId, role])
 }
