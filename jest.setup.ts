@@ -1,3 +1,13 @@
-import '@testing-library/jest-dom';
-// Mock for node-fetch in Jest environment
-/* global.fetch = require('node-fetch'); */
+import "@testing-library/jest-dom";
+
+jest.mock("next/navigation", () => ({
+    useRouter: () => ({
+        push: jest.fn(),
+        replace: jest.fn(),
+        pathname: "/",
+    }),
+}));
+
+jest.mock("next/config", () => () => ({
+    publicRuntimeConfig: {},
+}));

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="jest tests" tests="7" failures="0" errors="0" time="3.311">
-  <testsuite name="isValidFieldValue" errors="0" failures="0" skipped="0" timestamp="2025-08-01T10:58:46" time="0.884" tests="7">
+<testsuites name="jest tests" tests="22" failures="10" errors="0" time="21.703">
+  <testsuite name="isValidFieldValue" errors="0" failures="0" skipped="0" timestamp="2025-08-01T19:18:45" time="2.35" tests="7">
     <testcase classname="isValidFieldValue should return false or undefined, null, or empty string" name="isValidFieldValue should return false or undefined, null, or empty string" time="0.007">
     </testcase>
-    <testcase classname="isValidFieldValue should return true for valid non-empty strings" name="isValidFieldValue should return true for valid non-empty strings" time="0">
+    <testcase classname="isValidFieldValue should return true for valid non-empty strings" name="isValidFieldValue should return true for valid non-empty strings" time="0.001">
     </testcase>
     <testcase classname="isValidFieldValue should handle &quot;não&quot; and similar values correctly for optional fields" name="isValidFieldValue should handle &quot;não&quot; and similar values correctly for optional fields" time="0.002">
     </testcase>
@@ -11,9 +11,155 @@
     </testcase>
     <testcase classname="isValidFieldValue should return true if any item in an array is valid" name="isValidFieldValue should return true if any item in an array is valid" time="0.001">
     </testcase>
-    <testcase classname="isValidFieldValue should return true if any value in an object is valid" name="isValidFieldValue should return true if any value in an object is valid" time="0">
+    <testcase classname="isValidFieldValue should return true if any value in an object is valid" name="isValidFieldValue should return true if any value in an object is valid" time="0.001">
     </testcase>
-    <testcase classname="isValidFieldValue should handle nested structures" name="isValidFieldValue should handle nested structures" time="0.001">
+    <testcase classname="isValidFieldValue should handle nested structures" name="isValidFieldValue should handle nested structures" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Catalog API Route (POST)" errors="0" failures="7" skipped="0" timestamp="2025-08-01T19:18:45" time="2.853" tests="11">
+    <testcase classname="Catalog API Route (POST) should select a template and transition to bulk-auto-fill" name="Catalog API Route (POST) should select a template and transition to bulk-auto-fill" time="0.089">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: &quot;template-selected&quot;
+Received: &quot;error&quot;
+    at toBe (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:185:27)
+    at Generator.call (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at Generator._invoke [as next] (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should handle bulk auto-fill and transition to field-filling" name="Catalog API Route (POST) should handle bulk auto-fill and transition to field-filling" time="0.027">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: &quot;bulk-auto-filled&quot;
+Received: &quot;field-question&quot;
+    at toBe (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:219:27)
+    at Generator.call (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at Generator._invoke [as next] (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should ask for the next field if not all fields are filled" name="Catalog API Route (POST) should ask for the next field if not all fields are filled" time="0.007">
+      <failure>Error: expect(received).toContain(expected) // indexOf
+
+Expected substring: &quot;IDENTIFICADOR DE REGISTO PERSISTENTE [003] (opcional)&quot;
+Received string:    &quot;Por favor, forneça: Identificador de Registo Persistente [003] (opcional).&quot;
+    at toContain (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:247:31)
+    at Generator.call (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at Generator._invoke [as next] (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should process user response for a simple field and ask for next" name="Catalog API Route (POST) should process user response for a simple field and ask for next" time="0.073">
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should process user response for a data field with subfields" name="Catalog API Route (POST) should process user response for a data field with subfields" time="0.008">
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should handle &quot;review-fields&quot; command" name="Catalog API Route (POST) should handle &quot;review-fields&quot; command" time="0.004">
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should handle &quot;edit-field&quot; command and re-ask the field" name="Catalog API Route (POST) should handle &quot;edit-field&quot; command and re-ask the field" time="0.007">
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should transition to confirmation if all fields are filled" name="Catalog API Route (POST) should transition to confirmation if all fields are filled" time="0.007">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: &quot;record-complete&quot;
+Received: &quot;error&quot;
+    at toBe (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:384:27)
+    at Generator.call (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at Generator._invoke [as next] (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should save the record and return record-saved type" name="Catalog API Route (POST) should save the record and return record-saved type" time="0.008">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: &quot;record-saved&quot;
+Received: &quot;error&quot;
+    at toBe (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:417:27)
+    at Generator.call (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at Generator._invoke [as next] (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should handle template not found" name="Catalog API Route (POST) should handle template not found" time="0.003">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: &quot;template-not-found&quot;
+Received: &quot;error&quot;
+    at toBe (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:446:27)
+    at Generator.call (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at Generator._invoke [as next] (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+    <testcase classname="Catalog API Route (POST) should handle invalid conversation state" name="Catalog API Route (POST) should handle invalid conversation state" time="0.002">
+      <failure>Error: expect(received).toContain(expected) // indexOf
+
+Expected substring: &quot;Estado inválido da conversação.&quot;
+Received string:    &quot;Erro interno no servidor&quot;
+    at toContain (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:460:28)
+    at Generator.call (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at Generator._invoke [as next] (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at asyncGeneratorStep (C:\Tutoriais\Next js\uni-catalog\src\__tests__\api\catalog\route.test.ts:2:1)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)</failure>
+    </testcase>
+  </testsuite>
+  <testsuite name="HomePage" errors="0" failures="3" skipped="0" timestamp="2025-08-01T19:18:45" time="19.272" tests="4">
+    <testcase classname="HomePage should render the initial input and button" name="HomePage should render the initial input and button" time="0.182">
+    </testcase>
+    <testcase classname="HomePage should start cataloging and display template selection" name="HomePage should start cataloging and display template selection" time="5.039">
+      <failure>Error: thrown: &quot;Exceeded timeout of 5000 ms for a test.
+Add a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.&quot;
+    at it (C:\Tutoriais\Next js\uni-catalog\src\__tests__\app\page.test.tsx:35:5)
+    at _dispatchDescribe (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-circus\build\jestAdapterInit.js:604:26)
+    at describe (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-circus\build\jestAdapterInit.js:572:44)
+    at Object.describe (C:\Tutoriais\Next js\uni-catalog\src\__tests__\app\page.test.tsx:18:1)
+    at Runtime._execModule (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runtime\build\index.js:1266:24)
+    at Runtime._loadModule (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runtime\build\index.js:942:12)
+    at Runtime.requireModule (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runtime\build\index.js:830:12)
+    at jestAdapter (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-circus\build\runner.js:95:13)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at runTestInternal (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runner\build\testWorker.js:275:16)
+    at runTest (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runner\build\testWorker.js:343:7)
+    at Object.worker (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runner\build\testWorker.js:497:12)</failure>
+    </testcase>
+    <testcase classname="HomePage should display bulk auto-filled fields and auto-continue" name="HomePage should display bulk auto-filled fields and auto-continue" time="5.029">
+      <failure>Error: thrown: &quot;Exceeded timeout of 5000 ms for a test.
+Add a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.&quot;
+    at it (C:\Tutoriais\Next js\uni-catalog\src\__tests__\app\page.test.tsx:68:5)
+    at _dispatchDescribe (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-circus\build\jestAdapterInit.js:604:26)
+    at describe (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-circus\build\jestAdapterInit.js:572:44)
+    at Object.describe (C:\Tutoriais\Next js\uni-catalog\src\__tests__\app\page.test.tsx:18:1)
+    at Runtime._execModule (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runtime\build\index.js:1266:24)
+    at Runtime._loadModule (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runtime\build\index.js:942:12)
+    at Runtime.requireModule (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runtime\build\index.js:830:12)
+    at jestAdapter (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-circus\build\runner.js:95:13)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at runTestInternal (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runner\build\testWorker.js:275:16)
+    at runTest (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runner\build\testWorker.js:343:7)
+    at Object.worker (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runner\build\testWorker.js:497:12)</failure>
+    </testcase>
+    <testcase classname="HomePage should display a field question and allow user input" name="HomePage should display a field question and allow user input" time="5.029">
+      <failure>Error: thrown: &quot;Exceeded timeout of 5000 ms for a test.
+Add a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout.&quot;
+    at it (C:\Tutoriais\Next js\uni-catalog\src\__tests__\app\page.test.tsx:106:5)
+    at _dispatchDescribe (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-circus\build\jestAdapterInit.js:604:26)
+    at describe (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-circus\build\jestAdapterInit.js:572:44)
+    at Object.describe (C:\Tutoriais\Next js\uni-catalog\src\__tests__\app\page.test.tsx:18:1)
+    at Runtime._execModule (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runtime\build\index.js:1266:24)
+    at Runtime._loadModule (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runtime\build\index.js:942:12)
+    at Runtime.requireModule (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runtime\build\index.js:830:12)
+    at jestAdapter (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-circus\build\runner.js:95:13)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at runTestInternal (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runner\build\testWorker.js:275:16)
+    at runTest (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runner\build\testWorker.js:343:7)
+    at Object.worker (C:\Tutoriais\Next js\uni-catalog\node_modules\jest-runner\build\testWorker.js:497:12)</failure>
     </testcase>
   </testsuite>
 </testsuites>

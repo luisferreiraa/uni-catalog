@@ -15,22 +15,18 @@ jest.mock("next/server", () => ({
     },
 }))
 
-/* const mockChatCompletionsCreate = jest.fn() */
 
-let mockChatCompletionsCreate: jest.Mock
+let mockChatCompletionsCreate = jest.fn()
 
-// 2. Mockar o módulo 'openai' e atribuir o mock dentro da função de fábrica
 jest.mock("openai", () => {
-    // Atribui a função mockada aqui, garantindo que está inicializada quando o mock é criado
-    mockChatCompletionsCreate = jest.fn()
     return jest.fn(() => ({
         chat: {
             completions: {
-                create: mockChatCompletionsCreate, // Atribui a nossa função mockada
-            },
-        },
-    }))
-})
+                create: mockChatCompletionsCreate
+            }
+        }
+    }));
+});
 
 
 const mockTemplateCache = templateCache as jest.Mocked<typeof templateCache>
