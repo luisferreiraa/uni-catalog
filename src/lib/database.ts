@@ -174,10 +174,97 @@ export class DatabaseService {
                 }
             }
 
+            const potentialPublisherFields = ["210"]    // Campo de Publicação, Distribuição, etc
+
+            for (const field of fields) {
+                if (!potentialPublisherFields.includes(field.tag)) {
+                    continue
+                }
+
+                let publisherName: string | undefined
+
+                if (field.fieldType === FieldType.DATA && field.subfields) {
+                    const subfieldsObj = field.subfields as Record<string, any>
+                    // O subcampo 'c' do campo 210 é o "Nome do editor, produtor e/ou distribuidor"
+                    if (subfieldsObj.c) {
+                        if (Array.isArray(subfieldsObj.c)) {
+                            publisherName = String(subfieldsObj.c[0].trim())
+                        } else if (typeof subfieldsObj.c === "string") {
+                            publisherName = subfieldsObj.c.trim()
+                        }
+                    }
+                }
+
+                if (publisherName) {
+                    // Enncontrar ou criar a Editora
+                    const publisher = await prisma.publisher.upsert({
+                        where: { name: publisherName },
+                        update: {},     // Nenhuma atualização específica necessária se já existir
+                        create: {
+                            name: publisherName,
+                        },
+                    })
+
+                    // Ligar o CatalogRecord à Editora através da tabela de junção RecordPublisher
+                    await prisma.recordPublisher.upsert({
+                        where: {
+                            recordId_publisherId: {
+                                recordId: catalogRecord.id,
+                                publisherId: publisher.id,
+                            },
+                        },
+                        update: {},     // Nenhuma atualização necessária se já existir
+                        create: {
+                            recordId: catalogRecord.id,
+                            publisherId: publisher.id,
+                        },
+                    })
+                }
+            }
+
             return catalogRecord.id;
         } catch (error) {
             console.error("Erro ao salvar registro:", error);
             throw new Error("Falha ao salvar registro na base de dados");
+        }
+    }
+
+    /**
+     * Busca autores e o número de registos associados a cada um
+     * @param fields 
+     * @param template 
+     * @returns 
+     */
+    async getAuthorsWithRecordCount() {
+        try {
+            const authors = await prisma.person.findMany({
+                where: {
+                    // MODIFICADO: Usar o operador 'in' para incluir múltiplos PersonRole
+                    type: {
+                        in: [PersonRole.AUTHOR, PersonRole.OTHER],
+                    },
+                },
+                include: {
+                    RecordPerson: {
+                        // Inclui a relação com RecordPerson para contar os registros
+                        select: {
+                            recordId: true,
+                        },
+                    },
+                },
+                orderBy: {
+                    name: "asc"
+                },
+            })
+
+            return authors.map((author) => ({
+                id: author.id,
+                name: author.name,
+                recordCount: author.RecordPerson.length,    // Conta o número de registos associados
+            }))
+        } catch (error) {
+            console.error("Erro ao buscar autores com contagem de registos:", error)
+            throw new Error("Falha ao buscar autores com contagem de registos")
         }
     }
 

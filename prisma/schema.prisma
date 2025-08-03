@@ -24,15 +24,16 @@ enum PersonRole {
 }
 
 model CatalogRecord {
-  id               String         @id @default(cuid())
+  id               String            @id @default(cuid())
   templateName     String
   templateDesc     String?
   recordTemplateId String
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
   fields           CatalogField[]
   textUnimarc      String?
   RecordPerson     RecordPerson[]
+  RecordPublisher  RecordPublisher[]
 }
 
 model CatalogField {
@@ -67,6 +68,14 @@ model Person {
   RecordPerson RecordPerson[]
 }
 
+model Publisher {
+  id              String            @id @default(cuid())
+  name            String            @unique
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  RecordPublisher RecordPublisher[]
+}
+
 model RecordPerson {
   id        String     @id @default(cuid())
   recordId  String
@@ -78,4 +87,15 @@ model RecordPerson {
   person Person        @relation(fields: [personId], references: [id], onDelete: Cascade)
 
   @@unique([recordId, personId, role])
+}
+
+model RecordPublisher {
+  id          String        @id @default(cuid())
+  recordId    String
+  publisherId String
+  createdAt   DateTime      @default(now())
+  record      CatalogRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  publisher   Publisher     @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+
+  @@unique([recordId, publisherId])
 }
