@@ -87,9 +87,8 @@ export class DatabaseService {
             });
 
             // Processar pessoas dos 'fields' e ligá-las
-            // Identificar campos que podem conter pessoas (ex: 7xx, 1xx)
+            // Identificar campos que podem conter pessoas (ex: 7xx)
             const potentialPersonFields = [
-                "100",
                 "700",
                 "701",
                 "702",
@@ -97,38 +96,58 @@ export class DatabaseService {
             ]
 
             for (const field of fields) {
-                // Iterar sobre RecordFields
+                // Iterar sobre os RecordField[]
                 if (!potentialPersonFields.includes(field.tag)) {
-                    continue    // Ignorar se não for um campo de pessoa potencial
+                    continue // Ignorar se não for um campo de pessoa potencial
                 }
 
                 let personName: string | undefined
 
                 if (field.fieldType === FieldType.DATA && field.subfields) {
-                    // Para campos de dados, assumir que o subcampo 'a' contém o nome
                     const subfieldsObj = field.subfields as Record<string, any>
-
-                    if (subfieldsObj.a && typeof subfieldsObj.a === "string") {
-                        personName = subfieldsObj.a.trim()
-                    } else if (Array.isArray(subfieldsObj.a) && subfieldsObj.a.length > 0) {
-                        // Lidar com subcampo 'a' repetível se for um array de valores
-                        personName = String(subfieldsObj.a[0]).trim()   // Pegar o primeiro para o nome principal da pessoa
+                    // Lógica aprimorada para extrair o nome completo de campos de dados como 700
+                    const nameParts: string[] = []
+                    if (subfieldsObj.a) {
+                        // Subcampo $a (entrada principal, ex: Tordo,)
+                        if (Array.isArray(subfieldsObj.a)) {
+                            nameParts.push(String(subfieldsObj.a[0]).trim())
+                        } else if (typeof subfieldsObj.a === "string") {
+                            nameParts.push(subfieldsObj.a.trim())
+                        }
+                    }
+                    if (subfieldsObj.b) {
+                        // Subcampo $b (outras partes do nome, ex: João)
+                        if (Array.isArray(subfieldsObj.b)) {
+                            nameParts.push(String(subfieldsObj.b[0]).trim())
+                        } else if (typeof subfieldsObj.b === "string") {
+                            nameParts.push(subfieldsObj.b.trim())
+                        }
+                    }
+                    // Concatena as partes do nome, removendo vírgulas soltas e espaços extras
+                    personName = nameParts
+                        .join(" ")
+                        .replace(/,(\s*),/g, ",")
+                        .replace(/,$/, "")
+                        .trim()
+                    // Se o nome ainda terminar com vírgula, remove-a (ex: "Tordo,")
+                    if (personName.endsWith(",")) {
+                        personName = personName.slice(0, -1).trim()
                     }
                 } else if (field.fieldType === FieldType.CONTROL && field.value) {
-                    // Para campos de controlo, o valor é diretamente o nome
+                    // Para campos de controlo, o valor é diretamente o nome (se houver algum campo de controlo de pessoa no futuro)
                     personName = field.value.trim()
                 }
 
                 if (personName) {
-                    // Inferir o papel da pessoa com OpenAI
-                    const role = await this.inferPersonRole(field.tag, field.fieldName || null) // Passar fieldName
+                    // Inferir o papel da pessoa usando OpenAI
+                    const role = await this.inferPersonRole(field.tag, field.fieldName || null)
 
-                    // Encontrar ou criar Pessoa
+                    // Encontrar ou criar a Pessoa
                     const person = await prisma.person.upsert({
                         where: { name: personName },
                         update: {
-                            // A lógica de atualização pode ser refinada. Por agora, garante que o tipo é definido
-                            type: PersonRole.OTHER,     // Pode ser ajustado para ser mais inteligente
+                            // A lógica de atualização pode ser refinada. Por agora, garante que o tipo é definido.
+                            type: PersonRole.OTHER, // Pode ser ajustado para ser mais inteligente
                         },
                         create: {
                             name: personName,
@@ -140,12 +159,12 @@ export class DatabaseService {
                     await prisma.recordPerson.upsert({
                         where: {
                             recordId_personId_role: {
-                                recordId: catalogRecord.id,  // User o ID do CatalogRecord recém-criado
+                                recordId: catalogRecord.id,
                                 personId: person.id,
                                 role: role,
                             },
                         },
-                        update: {},     // Nenhuma atualização necessária se já existir
+                        update: {},
                         create: {
                             recordId: catalogRecord.id,
                             personId: person.id,
