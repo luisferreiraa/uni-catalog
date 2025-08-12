@@ -61,14 +61,402 @@ export class DatabaseService {
     }
 
     /**
+     * Verifica se um registo já exise na base de dados baseado em campos únicos
+     * Adapta-se ao tipo de template/ material
+     */
+
+    private async checkDuplicateRecord(
+        fields: SaveRecordData["fields"],
+        templateName: string,
+    ): Promise<{ isDuplicate: boolean; existingRecord?: any }> {
+        try {
+            console.log(`=== CHECKING DUPLICATES FOR TEMPLATE: ${templateName} ===`)
+
+            // Definir estratégias de verificação por tipo de material
+            const duplicateStrategies = this.getDuplicateStrategies(templateName.toLowerCase())
+
+            console.log(`Template: ${templateName}`)
+            console.log(`Strategies: ${duplicateStrategies.map((s) => s.name).join(", ")}`)
+
+            // Extrair valores dos campos relevantes
+            const fieldValues = this.extractFieldValues(fields)
+            console.log(`Extracted field values:`, fieldValues)
+
+            // Tentar cada estratégia em ordem de prioridade
+            for (const strategy of duplicateStrategies) {
+                console.log(`\n--- Trying strategy: ${strategy.name} ---`)
+                const result = await this.checkDuplicateByStrategy(strategy, fieldValues)
+                if (result.isDuplicate) {
+                    console.log(`✅ DUPLICATE FOUND using strategy: ${strategy.name}`)
+                    return result
+                } else {
+                    console.log(`❌ No duplicate found with strategy: ${strategy.name}`)
+                }
+            }
+
+            console.log(`=== NO DUPLICATES FOUND FOR ANY STRATEGY ===`)
+            return { isDuplicate: false }
+        } catch (error) {
+            console.error("Erro ao verificar duplicados:", error)
+            // Em caso de erro, não bloquear a gravação
+            return { isDuplicate: false }
+        }
+    }
+
+    /**
+     * Define estratégias de verificação de duplicados por tipo de material
+     */
+
+    private getDuplicateStrategies(templateName: string) {
+        const strategies = []
+
+        switch (templateName) {
+            case "Book (Monograph)":
+                strategies.push(
+                    { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 1 },
+                    { name: "Título+Autor+Ano", fields: ["200", "700", "210"], subfields: ["a", "a,b", "d"], priority: 2 },
+                    { name: "Título+Autor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 3 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 10 },
+                )
+                break
+
+            case "Periodical Publication":
+                strategies.push(
+                    { name: "ISSN", fields: ["011"], subfields: ["a"], priority: 1 },
+                    { name: "Título+Designação", fields: ["200", "207"], subfields: ["a", "a"], priority: 2 },
+                    { name: "Key Title", fields: ["530"], subfields: ["a"], priority: 3 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 5 },
+                )
+                break
+
+            case "Audio CD":
+                strategies.push(
+                    { name: "Número Editor", fields: ["071"], subfields: ["a"], priority: 1 },
+                    { name: "Título+Responsável", fields: ["200", "702"], subfields: ["a", "a,b"], priority: 2 },
+                    { name: "Título+Editora", fields: ["200", "710"], subfields: ["a", "a"], priority: 3 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 8 },
+                )
+                break
+
+            case "DVD (Video)":
+                strategies.push(
+                    { name: "Número Editor", fields: ["071"], subfields: ["a"], priority: 1 },
+                    { name: "Título+Diretor+Ano", fields: ["200", "700", "210"], subfields: ["a", "a,b", "d"], priority: 2 },
+                    { name: "Título+Diretor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 3 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 8 },
+                )
+                break
+
+            case "Map (Cartographic Material)":
+                strategies.push(
+                    {
+                        name: "Título+Cartógrafo+Escala",
+                        fields: ["200", "700", "206"],
+                        subfields: ["a", "a,b", "a"],
+                        priority: 1,
+                    },
+                    { name: "Título+Cartógrafo", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 2 },
+                    { name: "Título Moderno", fields: ["518"], subfields: ["a"], priority: 3 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 10 },
+                )
+                break
+
+            case "Electronic Material":
+                strategies.push(
+                    { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 1 },
+                    { name: "Título+Responsável", fields: ["200", "701"], subfields: ["a", "a,b"], priority: 2 },
+                    { name: "Título+Editora", fields: ["200", "210"], subfields: ["a", "c"], priority: 3 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 10 },
+                )
+                break
+
+            case "Iconography":
+                strategies.push(
+                    { name: "Título+Fotógrafo/Artista", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 1 },
+                    { name: "Título Adicional+Artista", fields: ["540", "700"], subfields: ["a", "a,b"], priority: 2 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 3, minLength: 8 },
+                )
+                break
+
+            case "Projectable Material":
+                strategies.push(
+                    { name: "Título+Autor+Tipo", fields: ["200", "700", "120"], subfields: ["a", "a,b", "a"], priority: 1 },
+                    { name: "Título+Autor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 2 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 3, minLength: 8 },
+                )
+                break
+
+            case "Tridimensional Object":
+                strategies.push(
+                    { name: "Título+Criador+Tipo", fields: ["200", "700", "230"], subfields: ["a", "a,b", "a"], priority: 1 },
+                    { name: "Título+Criador", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 2 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 3, minLength: 10 },
+                )
+                break
+
+            case "Archive/Collection":
+                strategies.push(
+                    { name: "Título+Colecionador", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 1 },
+                    { name: "Título+Instituição", fields: ["200", "710"], subfields: ["a", "a"], priority: 2 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 3, minLength: 15 },
+                )
+                break
+
+            case "Thesis/Dissertation":
+                strategies.push(
+                    { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 1 },
+                    {
+                        name: "Título+Autor+Instituição",
+                        fields: ["200", "700", "328"],
+                        subfields: ["a", "a,b", "a"],
+                        priority: 2,
+                    },
+                    { name: "Título+Autor+Grau", fields: ["200", "700", "502"], subfields: ["a", "a,b", "a"], priority: 3 },
+                    { name: "Título+Autor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 4 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 5, minLength: 15 },
+                )
+                break
+
+            case "Musical Score":
+                strategies.push(
+                    { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 1 },
+                    { name: "Título+Compositor+Forma", fields: ["200", "700", "125"], subfields: ["a", "a,b", "a"], priority: 2 },
+                    { name: "Título+Compositor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 3 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 8 },
+                )
+                break
+
+            default:
+                // Estratégia genérica para templates não reconhecidos
+                strategies.push(
+                    { name: "Título+Responsável", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 1 },
+                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 2, minLength: 10 },
+                )
+                break
+        }
+
+        return strategies.sort((a, b) => a.priority - b.priority)
+    }
+
+    /**
+     * Extrai valores dos campos para verificação de duplicados
+     */
+
+    private extractFieldValues(fields: SaveRecordData["fields"]): Record<string, any> {
+        const values: Record<string, any> = {}
+
+        for (const field of fields) {
+            if (field.fieldType === FieldType.DATA && field.subfields) {
+                const subfieldsObj = field.subfields as Record<string, any>
+                values[field.tag] = subfieldsObj
+            } else if (field.fieldType === FieldType.CONTROL && field.value) {
+                values[field.tag] = field.value
+            }
+        }
+
+        return values
+    }
+
+    /**
+     * Verifica duplicados utilizando uma estratégia específica
+     */
+
+    private async checkDuplicateByStrategy(
+        strategy: any,
+        fieldValues: Record<string, any>,
+    ): Promise<{ isDuplicate: boolean; existingRecord?: any }> {
+        console.log(`Checking strategy: ${strategy.name}`)
+        console.log(`Available field values:`, Object.keys(fieldValues))
+
+        // Para estratégias simples como ISBN, usar busca direta
+        if (strategy.name === "ISBN" && fieldValues["010"]) {
+            const isbn = fieldValues["010"].a
+            if (isbn) {
+                const cleanISBN = String(isbn).replace(/[-\s]/g, "").trim()
+
+                const existingRecord = await prisma.catalogRecord.findFirst({
+                    where: {
+                        fields: {
+                            some: {
+                                tag: "010",
+                                subfields: {
+                                    path: "$.a",
+                                    string_contains: cleanISBN,
+                                },
+                            },
+                        },
+                    },
+                    include: {
+                        fields: {
+                            where: {
+                                tag: {
+                                    in: strategy.fields,
+                                },
+                            },
+                        },
+                    },
+                })
+
+                if (existingRecord) {
+                    console.log(`ISBN duplicate found: ${cleanISBN}`)
+                    return { isDuplicate: true, existingRecord }
+                }
+            }
+        }
+
+        // Para outras estratégias, usar busca por múltiplos campos
+        const extractedValues = []
+        const fieldChecks = []
+
+        for (let i = 0; i < strategy.fields.length; i++) {
+            const fieldTag = strategy.fields[i]
+            const subfieldCodes = strategy.subfields[i].split(",")
+
+            if (!fieldValues[fieldTag]) continue
+
+            let value = ""
+
+            if (fieldTag.startsWith("0")) {
+                // Campo de controle
+                value = String(fieldValues[fieldTag]).trim()
+            } else {
+                // Campo de dados - extrair subcampos
+                const subfields = fieldValues[fieldTag]
+                const parts = []
+
+                for (const code of subfieldCodes) {
+                    if (subfields[code]) {
+                        const subfieldValue = Array.isArray(subfields[code])
+                            ? String(subfields[code][0]).trim()
+                            : String(subfields[code]).trim()
+                        parts.push(subfieldValue)
+                    }
+                }
+
+                value = parts
+                    .join(" ")
+                    .replace(/,(\s*),/g, ",")
+                    .replace(/,$/, "")
+                    .trim()
+                if (value.endsWith(",")) {
+                    value = value.slice(0, -1).trim()
+                }
+            }
+
+            if (value && (!strategy.minLength || value.length >= strategy.minLength)) {
+                extractedValues.push(value)
+                fieldChecks.push({ tag: fieldTag, value, subfieldCodes })
+            }
+        }
+
+        if (fieldChecks.length === 0) {
+            console.log(`No valid fields found for strategy ${strategy.name}`)
+            return { isDuplicate: false }
+        }
+
+        // Buscar todos os registros que tenham pelo menos um dos campos
+        const allRecords = await prisma.catalogRecord.findMany({
+            where: {
+                fields: {
+                    some: {
+                        tag: {
+                            in: fieldChecks.map((f) => f.tag),
+                        },
+                    },
+                },
+            },
+            include: {
+                fields: {
+                    where: {
+                        tag: {
+                            in: fieldChecks.map((f) => f.tag),
+                        },
+                    },
+                },
+            },
+        })
+
+        // Verificar manualmente se algum registro coincide com todos os critérios
+        for (const record of allRecords) {
+            let matchCount = 0
+
+            for (const check of fieldChecks) {
+                const recordField = record.fields.find((f) => f.tag === check.tag)
+
+                if (recordField) {
+                    if (check.tag.startsWith("0")) {
+                        // Campo de controle
+                        if (recordField.value === check.value) {
+                            matchCount++
+                        }
+                    } else {
+                        // Campo de dados
+                        const recordSubfields = recordField.subfields as any
+                        if (recordSubfields) {
+                            let subfieldMatch = true
+
+                            for (const code of check.subfieldCodes) {
+                                const expectedValue = fieldValues[check.tag][code]
+                                const recordValue = recordSubfields[code]
+
+                                if (expectedValue && recordValue) {
+                                    const cleanExpected = String(expectedValue).replace(/,$/, "").trim()
+                                    const cleanRecord = String(recordValue).replace(/,$/, "").trim()
+
+                                    if (cleanExpected !== cleanRecord) {
+                                        subfieldMatch = false
+                                        break
+                                    }
+                                } else if (expectedValue || recordValue) {
+                                    // Um tem valor e outro não
+                                    subfieldMatch = false
+                                    break
+                                }
+                            }
+
+                            if (subfieldMatch) {
+                                matchCount++
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Se todos os campos coincidem, é um duplicado
+            if (matchCount === fieldChecks.length) {
+                console.log(`Strategy "${strategy.name}" found duplicate with values: ${extractedValues.join(" | ")}`)
+                console.log(`Existing record ID: ${record.id}`)
+                return { isDuplicate: true, existingRecord: record }
+            }
+        }
+
+        console.log(`Strategy "${strategy.name}" found no duplicates`)
+        return { isDuplicate: false }
+    }
+
+    /**
      * Salva um registro UNIMARC na base de dados
      */
     async saveRecord(data: SaveRecordData): Promise<string> {
         try {
-            const { templateId, templateName, templateDesc, textUnimarc, template, fields } = data;
+            const { templateId, templateName, templateDesc, textUnimarc, template, fields } = data
+
+            // NOVO: Verificar se o registro já existe (passar templateName)
+            const duplicateCheck = await this.checkDuplicateRecord(fields, templateName)
+            if (duplicateCheck.isDuplicate) {
+                const existingRecord = duplicateCheck.existingRecord
+                const existingTitle =
+                    existingRecord?.fields?.find((f: any) => f.tag === "200")?.subfields?.a || "Título não encontrado"
+                const existingResponsible =
+                    existingRecord?.fields?.find((f: any) => f.tag === "700")?.subfields?.a || "Responsável não encontrado"
+
+                throw new Error(
+                    `Registro duplicado encontrado! Já existe um registro com título "${existingTitle}" e responsável "${existingResponsible}". ID do registro existente: ${existingRecord.id}`,
+                )
+            }
 
             // Prepara os campos no formato que o Prisma espera
-            const fieldsInput = this.prepareFieldsForPrisma(data.fields, template);
+            const fieldsInput = this.prepareFieldsForPrisma(data.fields, template)
 
             // Cria o registro principal
             const catalogRecord = await prisma.catalogRecord.create({
@@ -78,13 +466,13 @@ export class DatabaseService {
                     recordTemplateId: templateId,
                     textUnimarc,
                     fields: {
-                        create: fieldsInput
+                        create: fieldsInput,
                     },
                 },
                 include: {
                     fields: true,
                 },
-            });
+            })
 
             // Processar pessoas dos 'fields' e ligá-las
             // Identificar campos que podem conter pessoas (ex: 7xx)
@@ -174,7 +562,7 @@ export class DatabaseService {
                 }
             }
 
-            const potentialPublisherFields = ["210"]    // Campo de Publicação, Distribuição, etc
+            const potentialPublisherFields = ["210"] // Campo de Publicação, Distribuição, etc
 
             for (const field of fields) {
                 if (!potentialPublisherFields.includes(field.tag)) {
@@ -199,7 +587,7 @@ export class DatabaseService {
                     // Enncontrar ou criar a Editora
                     const publisher = await prisma.publisher.upsert({
                         where: { name: publisherName },
-                        update: {},     // Nenhuma atualização específica necessária se já existir
+                        update: {}, // Nenhuma atualização específica necessária se já existir
                         create: {
                             name: publisherName,
                         },
@@ -213,7 +601,7 @@ export class DatabaseService {
                                 publisherId: publisher.id,
                             },
                         },
-                        update: {},     // Nenhuma atualização necessária se já existir
+                        update: {}, // Nenhuma atualização necessária se já existir
                         create: {
                             recordId: catalogRecord.id,
                             publisherId: publisher.id,
@@ -222,10 +610,11 @@ export class DatabaseService {
                 }
             }
 
-            return catalogRecord.id;
+            console.log(`Novo registro criado com sucesso: ID ${catalogRecord.id}`)
+            return catalogRecord.id
         } catch (error) {
-            console.error("Erro ao salvar registro:", error);
-            throw new Error("Falha ao salvar registro na base de dados");
+            console.error("Erro ao salvar registro:", error)
+            throw error // Re-throw para que a API route possa capturar e retornar o erro específico
         }
     }
 
