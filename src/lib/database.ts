@@ -111,131 +111,174 @@ export class DatabaseService {
         const strategies = []
 
         switch (templateName) {
-            case "Book (Monograph)":
+            case "book (monograph)":
                 strategies.push(
+                    // ISBN é sempre único - se for igual, é realmente duplicado
                     { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 1 },
-                    { name: "Título+Autor+Ano", fields: ["200", "700", "210"], subfields: ["a", "a,b", "d"], priority: 2 },
-                    { name: "Título+Autor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 3 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 10 },
-                )
-                break
-
-            case "Periodical Publication":
-                strategies.push(
-                    { name: "ISSN", fields: ["011"], subfields: ["a"], priority: 1 },
-                    { name: "Título+Designação", fields: ["200", "207"], subfields: ["a", "a"], priority: 2 },
-                    { name: "Key Title", fields: ["530"], subfields: ["a"], priority: 3 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 5 },
-                )
-                break
-
-            case "Audio CD":
-                strategies.push(
-                    { name: "Número Editor", fields: ["071"], subfields: ["a"], priority: 1 },
-                    { name: "Título+Responsável", fields: ["200", "702"], subfields: ["a", "a,b"], priority: 2 },
-                    { name: "Título+Editora", fields: ["200", "710"], subfields: ["a", "a"], priority: 3 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 8 },
-                )
-                break
-
-            case "DVD (Video)":
-                strategies.push(
-                    { name: "Número Editor", fields: ["071"], subfields: ["a"], priority: 1 },
-                    { name: "Título+Diretor+Ano", fields: ["200", "700", "210"], subfields: ["a", "a,b", "d"], priority: 2 },
-                    { name: "Título+Diretor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 3 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 8 },
-                )
-                break
-
-            case "Map (Cartographic Material)":
-                strategies.push(
+                    // Título + Autor + Ano + Editora - muito específico
                     {
-                        name: "Título+Cartógrafo+Escala",
-                        fields: ["200", "700", "206"],
-                        subfields: ["a", "a,b", "a"],
-                        priority: 1,
-                    },
-                    { name: "Título+Cartógrafo", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 2 },
-                    { name: "Título Moderno", fields: ["518"], subfields: ["a"], priority: 3 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 10 },
-                )
-                break
-
-            case "Electronic Material":
-                strategies.push(
-                    { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 1 },
-                    { name: "Título+Responsável", fields: ["200", "701"], subfields: ["a", "a,b"], priority: 2 },
-                    { name: "Título+Editora", fields: ["200", "210"], subfields: ["a", "c"], priority: 3 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 10 },
-                )
-                break
-
-            case "Iconography":
-                strategies.push(
-                    { name: "Título+Fotógrafo/Artista", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 1 },
-                    { name: "Título Adicional+Artista", fields: ["540", "700"], subfields: ["a", "a,b"], priority: 2 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 3, minLength: 8 },
-                )
-                break
-
-            case "Projectable Material":
-                strategies.push(
-                    { name: "Título+Autor+Tipo", fields: ["200", "700", "120"], subfields: ["a", "a,b", "a"], priority: 1 },
-                    { name: "Título+Autor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 2 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 3, minLength: 8 },
-                )
-                break
-
-            case "Tridimensional Object":
-                strategies.push(
-                    { name: "Título+Criador+Tipo", fields: ["200", "700", "230"], subfields: ["a", "a,b", "a"], priority: 1 },
-                    { name: "Título+Criador", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 2 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 3, minLength: 10 },
-                )
-                break
-
-            case "Archive/Collection":
-                strategies.push(
-                    { name: "Título+Colecionador", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 1 },
-                    { name: "Título+Instituição", fields: ["200", "710"], subfields: ["a", "a"], priority: 2 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 3, minLength: 15 },
-                )
-                break
-
-            case "Thesis/Dissertation":
-                strategies.push(
-                    { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 1 },
-                    {
-                        name: "Título+Autor+Instituição",
-                        fields: ["200", "700", "328"],
-                        subfields: ["a", "a,b", "a"],
+                        name: "Título+Autor+Ano+Editora",
+                        fields: ["200", "700", "210", "210"],
+                        subfields: ["a", "a,b", "d", "c"],
                         priority: 2,
                     },
-                    { name: "Título+Autor+Grau", fields: ["200", "700", "502"], subfields: ["a", "a,b", "a"], priority: 3 },
-                    { name: "Título+Autor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 4 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 5, minLength: 15 },
+                    // Título + Autor + ISBN parcial (para detectar mesmo livro com ISBNs similares)
+                    { name: "Título+Autor+ISBN", fields: ["200", "700", "010"], subfields: ["a", "a,b", "a"], priority: 3 },
                 )
                 break
 
-            case "Musical Score":
+            case "periodical publication":
                 strategies.push(
-                    { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 1 },
-                    { name: "Título+Compositor+Forma", fields: ["200", "700", "125"], subfields: ["a", "a,b", "a"], priority: 2 },
-                    { name: "Título+Compositor", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 3 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 4, minLength: 8 },
+                    { name: "ISSN", fields: ["011"], subfields: ["a"], priority: 1 },
+                    { name: "Título+Volume+Número", fields: ["200", "207", "207"], subfields: ["a", "a", "b"], priority: 2 },
+                    { name: "Key Title", fields: ["530"], subfields: ["a"], priority: 3 },
+                )
+                break
+
+            case "audio cd":
+                strategies.push(
+                    { name: "Número Editor", fields: ["071"], subfields: ["a"], priority: 1 },
+                    {
+                        name: "Título+Responsável+Editora+Ano",
+                        fields: ["200", "702", "210", "210"],
+                        subfields: ["a", "a,b", "c", "d"],
+                        priority: 2,
+                    },
+                )
+                break
+
+            case "dvd (video)":
+                strategies.push(
+                    { name: "Número Editor", fields: ["071"], subfields: ["a"], priority: 1 },
+                    {
+                        name: "Título+Diretor+Ano+Editora",
+                        fields: ["200", "700", "210", "210"],
+                        subfields: ["a", "a,b", "d", "c"],
+                        priority: 2,
+                    },
                 )
                 break
 
             default:
-                // Estratégia genérica para templates não reconhecidos
+                // Estratégia genérica mais específica
                 strategies.push(
-                    { name: "Título+Responsável", fields: ["200", "700"], subfields: ["a", "a,b"], priority: 1 },
-                    { name: "Título Exato", fields: ["200"], subfields: ["a"], priority: 2, minLength: 10 },
+                    {
+                        name: "Título+Responsável+Ano+Editora",
+                        fields: ["200", "700", "210", "210"],
+                        subfields: ["a", "a,b", "d", "c"],
+                        priority: 1,
+                    },
+                    { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 2 },
                 )
                 break
         }
 
         return strategies.sort((a, b) => a.priority - b.priority)
+    }
+
+    /**
+   * Verifica se dois registros são realmente duplicados ou apenas edições diferentes
+   */
+    private async isDuplicateOrDifferentEdition(
+        newRecord: Record<string, any>,
+        existingRecord: any,
+        strategy: any,
+    ): Promise<{ isDuplicate: boolean; reason?: string }> {
+        console.log(`\n=== ANALYZING IF RECORDS ARE DUPLICATES OR DIFFERENT EDITIONS ===`)
+
+        // Se a estratégia é ISBN e os ISBNs são idênticos, é duplicado
+        if (strategy.name === "ISBN") {
+            console.log("ISBN match - this is a true duplicate")
+            return { isDuplicate: true, reason: "ISBN idêntico" }
+        }
+
+        // Para outras estratégias, verificar diferenças que indicam edições diferentes
+        const differences = []
+
+        // Verificar ano de publicação
+        const newYear = this.extractYear(newRecord)
+        const existingYear = this.extractYear(existingRecord)
+
+        if (newYear && existingYear && newYear !== existingYear) {
+            differences.push(`Ano diferente (novo: ${newYear}, existente: ${existingYear})`)
+        }
+
+        // Verificar editora
+        const newPublisher = this.extractPublisher(newRecord)
+        const existingPublisher = this.extractPublisher(existingRecord)
+
+        if (newPublisher && existingPublisher && newPublisher !== existingPublisher) {
+            differences.push(`Editora diferente (novo: ${newPublisher}, existente: ${existingPublisher})`)
+        }
+
+        // Verificar ISBN (se existir em ambos e forem diferentes)
+        const newISBN = this.extractISBN(newRecord)
+        const existingISBN = this.extractISBN(existingRecord)
+
+        if (newISBN && existingISBN && newISBN !== existingISBN) {
+            differences.push(`ISBN diferente (novo: ${newISBN}, existente: ${existingISBN})`)
+        }
+
+        // Verificar edição
+        const newEdition = this.extractEdition(newRecord)
+        const existingEdition = this.extractEdition(existingRecord)
+
+        if (newEdition && existingEdition && newEdition !== existingEdition) {
+            differences.push(`Edição diferente (novo: ${newEdition}, existente: ${existingEdition})`)
+        }
+
+        console.log(`Differences found: ${differences.length}`)
+        differences.forEach((diff) => console.log(`  - ${diff}`))
+
+        // Se há pelo menos 2 diferenças significativas, provavelmente são edições diferentes
+        if (differences.length >= 2) {
+            console.log("✅ DIFFERENT EDITIONS - allowing new record")
+            return {
+                isDuplicate: false,
+                reason: `Edições diferentes: ${differences.join(", ")}`,
+            }
+        }
+
+        // Se há apenas 1 diferença ou nenhuma, pode ser duplicado
+        if (differences.length <= 1) {
+            console.log("❌ LIKELY DUPLICATE - blocking new record")
+            return {
+                isDuplicate: true,
+                reason: differences.length === 1 ? `Possível duplicado: ${differences[0]}` : "Registros idênticos",
+            }
+        }
+
+        return { isDuplicate: false }
+    }
+
+    // Funções auxiliares para extrair informações específicas
+    private extractYear(record: any): string | null {
+        if (record["210"] && record["210"].d) {
+            const year = String(record["210"].d).match(/\d{4}/)
+            return year ? year[0] : null
+        }
+        return null
+    }
+
+    private extractPublisher(record: any): string | null {
+        if (record["210"] && record["210"].c) {
+            return String(record["210"].c).trim()
+        }
+        return null
+    }
+
+    private extractISBN(record: any): string | null {
+        if (record["010"] && record["010"].a) {
+            return String(record["010"].a).replace(/[-\s]/g, "").trim()
+        }
+        return null
+    }
+
+    private extractEdition(record: any): string | null {
+        if (record["205"] && record["205"].a) {
+            return String(record["205"].a).trim()
+        }
+        return null
     }
 
     /**
@@ -369,7 +412,7 @@ export class DatabaseService {
                 fields: {
                     where: {
                         tag: {
-                            in: fieldChecks.map((f) => f.tag),
+                            in: ["010", "200", "205", "210", "700"], // Incluir campos relevantes para análise
                         },
                     },
                 },
@@ -422,11 +465,29 @@ export class DatabaseService {
                 }
             }
 
-            // Se todos os campos coincidem, é um duplicado
+            // Se todos os campos coincidem, verificar se é duplicado ou edição diferente
             if (matchCount === fieldChecks.length) {
-                console.log(`Strategy "${strategy.name}" found duplicate with values: ${extractedValues.join(" | ")}`)
-                console.log(`Existing record ID: ${record.id}`)
-                return { isDuplicate: true, existingRecord: record }
+                console.log(`Potential match found with record ID: ${record.id}`)
+
+                // Converter record.fields para o formato esperado
+                const existingRecordData: Record<string, any> = {}
+                for (const field of record.fields) {
+                    if (field.fieldType === "DATA" && field.subfields) {
+                        existingRecordData[field.tag] = field.subfields
+                    } else if (field.fieldType === "CONTROL" && field.value) {
+                        existingRecordData[field.tag] = field.value
+                    }
+                }
+
+                const duplicateAnalysis = await this.isDuplicateOrDifferentEdition(fieldValues, existingRecordData, strategy)
+
+                if (duplicateAnalysis.isDuplicate) {
+                    console.log(`Strategy "${strategy.name}" confirmed duplicate: ${duplicateAnalysis.reason}`)
+                    return { isDuplicate: true, existingRecord: record }
+                } else {
+                    console.log(`Strategy "${strategy.name}" detected different edition: ${duplicateAnalysis.reason}`)
+                    // Continue checking other records
+                }
             }
         }
 
