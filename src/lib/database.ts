@@ -809,48 +809,61 @@ export class DatabaseService {
                 },
                 include: {
                     RecordPerson: {
-                        // Inclui a relação com RecordPerson para contar os registros
+                        // Inclui a relação com a tabela de junção `RecordPerson`
+                        // apenas com o `recordId` (pois não precisamos de mais detalhes aqui).
                         select: {
                             recordId: true,
                         },
                     },
                 },
                 orderBy: {
+                    // Ordena os autores por nome em ordem alfabética ascendente.
                     name: "asc"
                 },
             })
 
+            // Transforma o resultado: para cada autor, devolve id, nome e contagem de registros.
             return authors.map((author) => ({
                 id: author.id,
                 name: author.name,
-                recordCount: author.RecordPerson.length,    // Conta o número de registos associados
+                recordCount: author.RecordPerson.length,    // Usa o tamanho do array para contar registros associados.
             }))
         } catch (error) {
+            // Captura e loga qualquer erro que ocorra na query ou mapeamento.
             console.error("Erro ao buscar autores com contagem de registos:", error)
+            // Lança um erro genérico para a camada superior, evitando expor detalhes de DB.
             throw new Error("Falha ao buscar autores com contagem de registos")
         }
     }
 
+    /**
+     * Prepara um array de objetos de campos (CatalogField) no formato
+     * esperado pelo Prisma para inserção num CatalogRecord
+     * @param fields 
+     * @param template 
+     * @returns 
+     */
     private prepareFieldsForPrisma(
         fields: SaveRecordData['fields'],
         template: Template
     ): Prisma.CatalogFieldCreateWithoutRecordInput[] {
         return fields.map(field => {
-            // Encontra a definição do campo no template para obter informações adicionais
+            // Procura a definição completa do campo (control ou data field)
+            // dentro do template, para extrair metadados como repetibilidade e obrigatoriedade
             const fieldDef = [
                 ...template.controlFields,
                 ...template.dataFields
             ].find(f => f.tag === field.tag);
 
             return {
-                tag: field.tag,
-                value: field.value ?? '',
-                subfields: field.subfields ?? Prisma.JsonNull,
-                fieldType: field.fieldType,
-                fieldName: field.fieldName ?? null,
-                subfieldNames: field.subfieldNames ?? Prisma.JsonNull,
-                isRepeatable: fieldDef?.repeatable || false, // Adiciona informação de repetibilidade
-                isMandatory: fieldDef?.mandatory || false    // Adiciona informação de obrigatoriedade
+                tag: field.tag,     // Código do campo UNIMARC
+                value: field.value ?? '',       // Valor de campo de controlo (string simples)
+                subfields: field.subfields ?? Prisma.JsonNull,      // Subcampos (para campos de dados)
+                fieldType: field.fieldType,     // Tipo do campo (CONTROL ou DATA)
+                fieldName: field.fieldName ?? null,     // Nome amigável do campo, se existir
+                subfieldNames: field.subfieldNames ?? Prisma.JsonNull,      // Nomes amigáveis dos subcampos
+                isRepeatable: fieldDef?.repeatable || false,    // Define se o campo pode se repetir
+                isMandatory: fieldDef?.mandatory || false       // Define se o campo é obrigatório
             };
         });
     }
@@ -858,17 +871,27 @@ export class DatabaseService {
 
     /**
      * Prepara os campos para inserção na base de dados
+     * Esta função recebe os campos preenchidos (filledFields) e o template
+     * de definição (template), e retorna um array de objetos prontos
+     * para serem inseridos via Prisma
      */
     private prepareFields(filledFields: Record<string, any>, template: Template) {
+        // Array que armazena todos os campos prontos para criação na BD
         const fieldsToCreate = [];
 
+        // Percorre todos os pares vindos do objeto filledFields
         for (const [tag, value] of Object.entries(filledFields)) {
-            // Encontra o campo no template
+
+            // Procura no template se essa tag corresponde a um campo de controlo
             const controlField = template.controlFields.find((f) => f.tag === tag);
+
+            // Procura no template se essa tag corresponde a um campo de dados
             const dataField = template.dataFields.find((f) => f.tag === tag);
 
             if (controlField) {
-                // Campo de controle
+                // Caso seja um campo de controlo:
+                // Estes campos geralmente contêm valores fixos ou identificadores
+                // e não possuem subcampos
                 fieldsToCreate.push({
                     tag,
                     value: String(value),
@@ -878,7 +901,10 @@ export class DatabaseService {
                     isMandatory: controlField.mandatory || false
                 });
             } else if (dataField) {
-                // Campo de dados - pode ter subcampos
+                // Caso seja um campo de dados:
+                // Estes podem conter subcampos
+
+                // Faz o aprsing do valor para ssubcampos, utilizando a lógica definida em parseSubfields
                 const subfields = this.parseSubfields(value, dataField);
 
                 fieldsToCreate.push({
@@ -892,82 +918,131 @@ export class DatabaseService {
             }
         }
 
+        // Retorna todos os campos prontos para inserção na base de dados
         return fieldsToCreate;
     }
 
     /**
-     * Analisa e estrutura subcampos para campos de dados
+     * Analisa e estrutura subcampos para campos de dados.
+     * 
+     * Objetivo:
+     * - Converter o valor bruto (`value`) associado a um campo UNIMARC
+     * em uma estrutura padronizada de subcampos que pode ser guardada na base de dados.
+     * - Lidar tanto com valores simples (um único conjunto de subcampos)
+     * quanto com valores múltiplos (campos repetidos).
+     * @param value Valor bruto do campo (pode ser objeto, string, ou array de ocorrências).
+     * @param dataField Definição do campo no template, contendo metadados como tags e subcampos permitidos.
+     * @returns Objeto representando os subcampos já estruturados.
      */
     private parseSubfields(value: any, dataField: DataField): Record<string, any> {
-        // Se o valor é um array, significa que temos múltiplas ocorrências
+
+        // Caso o valor seja um array:
+        // Isso implica que o campo é repetível e que o utilizador forneceu
+        // múltiplas ocorrências desse mesmo campo
         if (Array.isArray(value)) {
             return {
+                // occurrences guarda um array, onde cada elemento é o resultado do parsing
+                // individual de cada ocorrência utilizando parseSingleSubfield
                 occurrences: value.map(v => this.parseSingleSubfield(v, dataField))
             };
         }
 
+        // Caso contrário, o valor representa apenas uma ocorrência do campo
+        // Chamamos parseSingleSubfield diretamente para processar e validar
         return this.parseSingleSubfield(value, dataField);
     }
 
+    /**
+     * Analisa um único valor e o converte em um objeto de subcampos,
+     * validando contra a definição do campo (`dataField`).
+     * 
+     * Regras principais:
+     * 1. Se o valor for string simples → colocar no subcampo "a" (subcampo principal).
+     * 2. Se for um objeto → validar códigos de subcampo com base na definição.
+     * 3. Se nada válido for encontrado → forçar para "a" como fallback.
+     * 
+     * @param value Valor bruto fornecido (string simples, objeto ou outro tipo).
+     * @param dataField Definição do campo de dados, contendo lista de subcampos permitidos.
+     * @returns Objeto { códigoSubcampo: valor } pronto para ser persistido.
+     */
     private parseSingleSubfield(value: any, dataField: DataField): Record<string, string> {
+        // Objeto que armazenará o resultado final de subcampos válidos
         const subfields: Record<string, string> = {};
 
-        // Se o valor é uma string simples, coloca no subcampo 'a' (principal)
+        // Caso 1: Valor simples (string) → atribui direto ao subcampo "a"
+        // Isso é comum em campos UNIMARC onde o subcampo 'a' é o principal
         if (typeof value === "string") {
             subfields.a = value;
-            return subfields;
+            return subfields;   // Já podemos retornar pois não há parsing extra a fazer
         }
 
-        // Se o valor já é um objeto com subcampos
+        // Caso 2: Valor é um objeto (possivelmente com múltiplos subcampos)
         if (typeof value === "object" && value !== null) {
-            // Valida se os subcampos existem na definição
+            // Percorre cada par (código, valor) do objeto recebido
             for (const [code, subfieldValue] of Object.entries(value)) {
+                // Verifica se o código de subcampo existe na definição oficial do campo
                 const subfieldDef = dataField.subFieldDef.find((sf) => sf.code === code);
+
+                // Apenas aceita se o código for válido e o valor for string
                 if (subfieldDef && typeof subfieldValue === "string") {
                     subfields[code] = subfieldValue;
                 }
             }
         }
 
-        // Se não há subcampos válidos, coloca no 'a'
+        // Caso 3: Nenhum subcampo válido encontrado → fallback para 'a'
+        // Isso garante que o dado não se perca mesmo que venha mal formatado
         if (Object.keys(subfields).length === 0) {
-            subfields.a = String(value);
+            subfields.a = String(value);    // Converte para string caso seja número, boolean, etc.
         }
 
+        // Retorna o objeto de subcampos formatado e validado
         return subfields;
     }
 
     /**
-     * Busca um registro por ID
+     * Busca um registro de catálogo pelo seu ID único
+     * @param id Identificador do registro no banco
+     * @returns Objeto CatalogRecord encontrado (ou null se não existir)
      */
     async getRecord(id: string) {
         try {
+            // Consulta única (findUnique) no Prisma, filtrando pelo campo 'id'
+            // Inclui também os campos relacionados, ordenados pelo código da tag (ascendente)
             return await prisma.catalogRecord.findUnique({
                 where: { id },
                 include: {
                     fields: {
-                        orderBy: { tag: "asc" },
+                        orderBy: { tag: "asc" },    // Organização por tag facilita exibição sequencial
                     },
                 },
             })
         } catch (error) {
+            // Captura e loga o erro antes de repassá-lo
             console.error("Erro ao buscar registro:", error)
+            // Dispara erro genérico para não expor detalhes internos ao chamador
             throw new Error("Falha ao buscar registro")
         }
     }
 
     /**
-     * Lista registros com paginação
+     * Lista registros de catálogo com suporte a paginação
+     * @param page Número da página (1 por padrão)
+     * @param limit Quantidade de registros por página (20 por padrão)
+     * @returns { records, total, pages, currentPage }
      */
     async listRecords(page = 1, limit = 20) {
         try {
+            // Calcula quantos registros devem ser "pulados" no offset
             const skip = (page - 1) * limit
 
+            // Busca registros e total de forma paralela com Promise.all
+            // → Evita duas idas ao banco em sequência
             const [records, total] = await Promise.all([
                 prisma.catalogRecord.findMany({
-                    skip,
-                    take: limit,
-                    orderBy: { createdAt: "desc" },
+                    skip,   // Offset baseado na página
+                    take: limit,    // Quantidade por página
+                    orderBy: { createdAt: "desc" }, // Mais recentes primeiro
                     include: {
                         fields: {
                             select: {
@@ -980,34 +1055,45 @@ export class DatabaseService {
                         },
                     },
                 }),
-                prisma.catalogRecord.count(),
+                prisma.catalogRecord.count(),   // Conta total de registros para calcular paginação
             ])
 
+            // Retorna dados estruturados para paginação
             return {
-                records,
-                total,
-                pages: Math.ceil(total / limit),
-                currentPage: page,
+                records,    // Lista da página atual
+                total,  // Total geral de registros
+                pages: Math.ceil(total / limit),    // Quantidade total de páginas
+                currentPage: page,  // Página solicitada
             }
         } catch (error) {
+            // Log para debug
             console.error("Erro ao listar registros:", error)
+            // Mensagem genérica para o consumidor
             throw new Error("Falha ao listar registros")
         }
     }
 
     /**
-     * Atualiza um registro existente
+     * Atualiza um registro existente no catálogo
+     * @param id ID do registro que será atualizado
+     * @param filledFields Objeto contendo os campos preenchidos (tag → valor/subcampos)
+     * @param template Estrutura de template que define campos, subcampos, obrigatoriedade etc.
      */
     async updateRecord(id: string, filledFields: Record<string, any>, template: Template) {
         try {
-            // Remove campos existentes
+            // Passo 1: Remove todos os campos existentes do registro
+            // → Estratégia simples: apaga tudo e insere de novo (pode ser otimizada para updates parciais)
             await prisma.catalogField.deleteMany({
                 where: { recordId: id },
             })
 
-            // Adiciona novos campos
+            // Passo 2: Prepara os novos campos para inserção
+            // → Método 'prepareFields' transforma os dados brutos em estrutura compatível com o modelo Prisma
             const fieldsToCreate = this.prepareFields(filledFields, template)
 
+            // Passo 3: Atualiza o registro no banco
+            // - Atualiza a data de modificação (updatedAt)
+            // - Cria os novos campos associados (relation create)
             await prisma.catalogRecord.update({
                 where: { id },
                 data: {
@@ -1018,79 +1104,108 @@ export class DatabaseService {
                 },
             })
 
+            // Retorna ID atualizado como confirmação
             return id
         } catch (error) {
+            // Log de detalhes na consola para debug
             console.error("Erro ao atualizar registro:", error)
+            // Dispara erro genérico
             throw new Error("Falha ao atualizar registro")
         }
     }
 
     /**
-     * Remove um registro
+     * Remove um registo do catálogo
+     * @param id ID do registro a ser removido
      */
     async deleteRecord(id: string) {
         try {
+            // Remove o registo pelo ID
+            // Dependendo do schema, campos relacionados podem ser removidos em cascata (via onDelete CASCADE)
             await prisma.catalogRecord.delete({
                 where: { id },
             })
         } catch (error) {
+            // Log para debug
             console.error("Erro ao remover registro:", error)
+            // Erro genérico para evitar exposição de detalhes da BD
             throw new Error("Falha ao remover registro")
         }
     }
 
     /**
-     * Busca registros por template
+     * Busca registos por template específico
+     * @param templateId ID do template cujos registos devem ser retornados
      */
     async getRecordsByTemplate(templateId: string) {
         try {
+            // Consulta ao banco usando Prisma
+            // - 'where' filtra apenas registos cujo recordTemplateId corresponda ao recebido
+            // - 'include' carrega também os campos relacionados (fields)
+            // - 'orderBy' ordena os resultados do mais recente para o mais antigo
             return await prisma.catalogRecord.findMany({
                 where: { recordTemplateId: templateId },
                 include: {
-                    fields: true,
+                    fields: true,   // Inclui todos os campos associados ao registo
                 },
-                orderBy: { createdAt: "desc" },
+                orderBy: { createdAt: "desc" }, // Últimos registos criados vêm primeiro
             })
         } catch (error) {
+            // Log para debug
             console.error("Erro ao buscar registros por template:", error)
+            // Lannça erro genérico
             throw new Error("Falha ao buscar registros por template")
         }
     }
 
     /**
      * Estatísticas da base de dados
+     * Retorna informações resumidas sobre os registos do catálogo.
      */
     async getStats() {
         try {
+            // Executa três queries em paralelo para melhorar a performance usando Promise.all
+            // Isso evita que cada consulta espere a anterior terminar.
             const [totalRecords, recordsByTemplate, recentRecords] = await Promise.all([
+
+                // Conta o número total de registos no catálogo
                 prisma.catalogRecord.count(),
+
+                // Agrupa registos por templateName e conta quantos registos há em cada grupo
                 prisma.catalogRecord.groupBy({
-                    by: ["templateName"],
+                    by: ["templateName"],   // Campo de agrupamento
                     _count: {
-                        id: true,
+                        id: true,   // Coonta quantos IDs existem por template
                     },
                     orderBy: {
                         _count: {
-                            id: "desc",
+                            id: "desc",     // Ordem do template mais usado para o menos usado
                         },
                     },
                 }),
+
+                // Conta quantos registos foram criados nas últimas 23 horas
                 prisma.catalogRecord.count({
                     where: {
                         createdAt: {
-                            gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // últimas 24h
+                            // 'gte' significa "maior ou igual a"
+                            // Aqui calcula-se a data/hora de 24h atrás a partir de agora
+                            gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
                         },
                     },
                 }),
             ])
 
+            // Retorna os dados estatísticos como um objeto estruturado
             return {
                 totalRecords,
                 recordsByTemplate,
                 recentRecords,
             }
         } catch (error) {
+            // Log para debug
             console.error("Erro ao buscar estatísticas:", error)
+            // Lança erro genérico
             throw new Error("Falha ao buscar estatísticas")
         }
     }
