@@ -1,59 +1,80 @@
-import { FieldType, PersonRole, Prisma } from "@prisma/client"
-import { prisma } from "./prisma"
-import type { Template, DataField } from "@/app/types/unimarc"
-import { JsonValue } from "@prisma/client/runtime/library"
-import OpenAI from "openai"
+import { FieldType, PersonRole, Prisma } from "@prisma/client"  // Importa tipos e enums gerados pelo Prisma a partir do schema da base de dados
+import { prisma } from "./prisma"   // Importa a instância do cliente Prisma, responsável pela comunicação com a base de dados
+import type { Template, DataField } from "@/app/types/unimarc"  // Importa tipos TypeScript definidos localmente para Template e DataField
+import { JsonValue } from "@prisma/client/runtime/library"  // Tipo do Prisma para representar valores JSON válidos
+import OpenAI from "openai" // Importa a SDK da OpenAI para interagir com os modelos de IA
 
 // Inicializar o cliente OpenAI
 const openai = new OpenAI({
-    apiKey: process.env.OPEN_API_KEY,
+    apiKey: process.env.OPEN_API_KEY,   // A API Key é obtida de variáveis de ambiente
 })
 
+// Interface que define a estrutura dos dados necessários para guardar um registo (record)
 export interface SaveRecordData {
-    templateId: string
-    templateName: string
-    templateDesc?: string
-    filledFields: Record<string, any>
-    template: Template
-    textUnimarc: string
+    templateId: string      // ID único do template
+    templateName: string    // Nome legível do template
+    templateDesc?: string   // Descrição opcional do template
+    filledFields: Record<string, any>   // Objeto genérico com pares chave-valor para campos já preenchidos
+    // Melhoria: tipar meljor este "any" para evitar erros silenciosos
+    template: Template      // Objeto template completo
+    textUnimarc: string     // Representação textual do registo em formato UNIMARC
     fields: {
-        tag: string
-        value?: string | null
-        subfields?: JsonValue
-        fieldType: FieldType
-        fieldName?: string | null
-        subfieldNames?: JsonValue
-        isRepeatable?: boolean
-    }[]
+        tag: string     // Tag UNIMARC
+        value?: string | null       // Valor textual do campo (se aplicável)
+        subfields?: JsonValue       // Subcampos em formato JSON
+        fieldType: FieldType        // Tipo de campo (enum vindo do Prisma)
+        fieldName?: string | null   // Nome legível do campo
+        subfieldNames?: JsonValue   // Nomes legíveis dos subcampos (JSON)
+        isRepeatable?: boolean      // Se o campo pode aparecer mais do que uma vez  
+    }[]     // Array de campos, cada um representa uma entrada UNIMARC com metadados associados
 }
 
 export class DatabaseService {
 
-    // Função para inferir o PersonRole utilizando OpenAI
+    /**
+     * Função privada para inferir o PersonRole (enum) com base
+     * num tag e nome do campo UNIMARC, utilizando o modelo da OpenAI
+     * @param fieldTag 
+     * @param fieldName 
+     * @returns 
+     */
     private async inferPersonRole(fieldTag: string, fieldName: string | null): Promise<PersonRole> {
+
+        // Prompt enviado ao modelo da OpenAI
+        // Inclui a tag e o nome do campo, e pede explicitamente para
+        // retornar apenas um valor específico entre as opções pré-definidas
         const prompt = `Given the UNIMARC field tag "${fieldTag}" and its name "${fieldName || "N/A"}",
         what is the most appropriate role for a person associated with this field?
         Choose one from the following roles: AUTHOR, TRANSLATOR, COMPOSER, INTERPRETER, ILLUSTRATOR, EDITOR, OTHER.
         Return only the role name, e.g., "AUTHOR".`
 
         try {
+            // Chamada à API da OpenAI para criar uma conclusão de chat
             const completion = await openai.chat.completions.create({
-                model: "gpt-4o",
+                model: "gpt-4o",    // Modelo escolhido para inferência
                 messages: [
+                    // Contexto do sistema - define o comportamento esperado do modelo
                     { role: "system", content: "You are a helpful assistant that infers person roles from UNIMARC fields." },
+                    // Mensagem do utilizador com prompt real
                     { role: "user", content: prompt },
                 ],
-                temperature: 0.1,
-                max_tokens: 20,
+                temperature: 0.1,   // Baixa temperatira = respostas mais determínisticas e consistentes
+                max_tokens: 20,     // Limita o tamanho da resposta, prevenindo texto extra indesejado
             })
 
+            // Extrai o conteúdo da primeira escolha e normaliza para uppercase
+            // O uso de optional chaining (`?.`) evita erros caso algum nível seja undefined
             const inferredRole = completion.choices[0]?.message?.content?.trim().toUpperCase() || ""
+
+            // Valida se o valor retornado pela OpenAI corresponde a um valor válido no enum PersonRole
             if (Object.values(PersonRole).includes(inferredRole as PersonRole)) {
                 return inferredRole as PersonRole
             } else {
+                // Caso a IA devolva algo inválido, avisa na consola e devolve "OTHER"
                 console.warn(`OpenAI returned an invalid role: ${inferredRole} for tag ${fieldTag}. Defaulting to OTHER.`)
                 return PersonRole.OTHER
             }
+            // Tratamento de erros - se a API falhar, regista na consola e devolve "OTHER"
         } catch (error) {
             console.error(`Error inferring person role for tag ${fieldTag}:`, error)
             return PersonRole.OTHER
@@ -62,41 +83,52 @@ export class DatabaseService {
 
     /**
      * Verifica se um registo já exise na base de dados baseado em campos únicos
-     * Adapta-se ao tipo de template/ material
+     * A lógica adapta-se ao tipo de template/ material
      */
 
     private async checkDuplicateRecord(
-        fields: SaveRecordData["fields"],
-        templateName: string,
+        fields: SaveRecordData["fields"],   // Campos preenchidos do registo, extraídos da estrutura SaveRecordData
+        templateName: string,       // Nome do template/material, usado para escolher a estratégia
     ): Promise<{ isDuplicate: boolean; existingRecord?: any }> {
         try {
+            // Log inicial para debug
             console.log(`=== CHECKING DUPLICATES FOR TEMPLATE: ${templateName} ===`)
 
-            // Definir estratégias de verificação por tipo de material
+            // Seleciona a(s) estratégia(s) de detecção de duplicados
+            // com base no tipo de template/material
             const duplicateStrategies = this.getDuplicateStrategies(templateName.toLowerCase())
 
+            // Logs para inspeção de estratégias selecionadas
             console.log(`Template: ${templateName}`)
             console.log(`Strategies: ${duplicateStrategies.map((s) => s.name).join(", ")}`)
 
-            // Extrair valores dos campos relevantes
+            // Extrair os valores dos campos relevantes para verificação de duplicados
+            // A extração é isolada em "extractFieldValues" para manter o método principal limpo
             const fieldValues = this.extractFieldValues(fields)
             console.log(`Extracted field values:`, fieldValues)
 
-            // Tentar cada estratégia em ordem de prioridade
+            // Percorre cada estratégia por ordem de prioridade
+            // Se encontrar um duplicado, retorna imediatamente
             for (const strategy of duplicateStrategies) {
                 console.log(`\n--- Trying strategy: ${strategy.name} ---`)
                 const result = await this.checkDuplicateByStrategy(strategy, fieldValues)
+
                 if (result.isDuplicate) {
+                    // Encontrou um duplicado - retorna o resultado com o registo existente
                     console.log(`✅ DUPLICATE FOUND using strategy: ${strategy.name}`)
                     return result
                 } else {
+                    // Nenhum duplicado encontrado nesta estratégia - continua a procurar
                     console.log(`❌ No duplicate found with strategy: ${strategy.name}`)
                 }
             }
 
+            // Se nenhuma estratégia encontrou um duplicado, retorna false
             console.log(`=== NO DUPLICATES FOUND FOR ANY STRATEGY ===`)
             return { isDuplicate: false }
         } catch (error) {
+            // Tratamento de erro - garante que falhas na verificação de duplicados 
+            // não bloqueiam a gravação do registo
             console.error("Erro ao verificar duplicados:", error)
             // Em caso de erro, não bloquear a gravação
             return { isDuplicate: false }
@@ -105,24 +137,27 @@ export class DatabaseService {
 
     /**
      * Define estratégias de verificação de duplicados por tipo de material
+     * Esta função retorna uma lista de objetos que descrevem quais campos/subcampos
+     * devem ser usados para identificar potenciais duplicados, bem como a prioridade de cada estratégia
      */
 
     private getDuplicateStrategies(templateName: string) {
-        const strategies = []
+        const strategies = []   // Lista onde serão acumuladas as estratégias
 
         switch (templateName) {
             case "book (monograph)":
                 strategies.push(
-                    // ISBN é sempre único - se for igual, é realmente duplicado
+                    // Estratégia 1: ISBN é universalmente único - se coincide, é duplicado
                     { name: "ISBN", fields: ["010"], subfields: ["a"], priority: 1 },
-                    // Título + Autor + Ano + Editora - muito específico
+
+                    // Estratégia 2: Combinação muito específica que reduz falsos positivos
                     {
                         name: "Título+Autor+Ano+Editora",
-                        fields: ["200", "700", "210", "210"],
-                        subfields: ["a", "a,b", "d", "c"],
+                        fields: ["200", "700", "210", "210"],   // Tags UNIMARC relevantes
+                        subfields: ["a", "a,b", "d", "c"],      // Subcampos relevantes para a comparação
                         priority: 2,
                     },
-                    // Título + Autor + ISBN parcial (para detectar mesmo livro com ISBNs similares)
+                    // Estratégia 3: Deteta duplicados com ISBNs parciais + título e autor
                     { name: "Título+Autor+ISBN", fields: ["200", "700", "010"], subfields: ["a", "a,b", "a"], priority: 3 },
                 )
                 break
@@ -160,7 +195,8 @@ export class DatabaseService {
                 break
 
             default:
-                // Estratégia genérica mais específica
+                // Estratégia genérica usada quando o tipo de material não é reconhecido
+                // Começa com uma combinação forte e depois tenta ISBN se existir
                 strategies.push(
                     {
                         name: "Título+Responsável+Ano+Editora",
@@ -173,11 +209,19 @@ export class DatabaseService {
                 break
         }
 
+        // Ordena as estratégias por prioridade antes de devolver
         return strategies.sort((a, b) => a.priority - b.priority)
     }
 
     /**
-   * Verifica se dois registros são realmente duplicados ou apenas edições diferentes
+   * Verifica se dois registos são realmente duplicados ou apenas edições diferentes
+   * 
+   * Lógica geral:
+   * 1. Se a estratégia for baseada em ISBN e os valores coincidirem, é duplicado
+   * 2. Para outras estratégias, compara campos críticos
+   * 3. Conta quantas diferenças significativas existem:
+   *    - ≥ 2 diferenças → assume edições diferentes
+   *    - ≤ 1 diferença → assume que é duplicado.
    */
     private async isDuplicateOrDifferentEdition(
         newRecord: Record<string, any>,
@@ -186,14 +230,16 @@ export class DatabaseService {
     ): Promise<{ isDuplicate: boolean; reason?: string }> {
         console.log(`\n=== ANALYZING IF RECORDS ARE DUPLICATES OR DIFFERENT EDITIONS ===`)
 
-        // Se a estratégia é ISBN e os ISBNs são idênticos, é duplicado
+        // Regra especial: ISBN igual significa duplicado certo
         if (strategy.name === "ISBN") {
             console.log("ISBN match - this is a true duplicate")
             return { isDuplicate: true, reason: "ISBN idêntico" }
         }
 
-        // Para outras estratégias, verificar diferenças que indicam edições diferentes
+        // Lisya para armazenar diferenças encontradas
         const differences = []
+
+        // Comparação campo a campo para outras estratégias
 
         // Verificar ano de publicação
         const newYear = this.extractYear(newRecord)
@@ -227,11 +273,13 @@ export class DatabaseService {
             differences.push(`Edição diferente (novo: ${newEdition}, existente: ${existingEdition})`)
         }
 
+        // Log das diferenças encontradas
         console.log(`Differences found: ${differences.length}`)
         differences.forEach((diff) => console.log(`  - ${diff}`))
 
-        // Se há pelo menos 2 diferenças significativas, provavelmente são edições diferentes
+        // Decisão baseada no número de diferenças
         if (differences.length >= 2) {
+            // Muitas diferenças, provavelmente são edições distintas
             console.log("✅ DIFFERENT EDITIONS - allowing new record")
             return {
                 isDuplicate: false,
@@ -239,8 +287,8 @@ export class DatabaseService {
             }
         }
 
-        // Se há apenas 1 diferença ou nenhuma, pode ser duplicado
         if (differences.length <= 1) {
+            // Poucas diferenças, alta probabilidade de duplicado
             console.log("❌ LIKELY DUPLICATE - blocking new record")
             return {
                 isDuplicate: true,
@@ -248,11 +296,18 @@ export class DatabaseService {
             }
         }
 
+        // Fallback de segurança (provavelmente nunca chamado)
         return { isDuplicate: false }
     }
 
-    // Funções auxiliares para extrair informações específicas
+    /**
+     * Funções auxiliares para extrair campos específicos de um registo UNIMARC
+     * Cada função aplica validação e limpeza básiica antes de retornar o valor
+     * @param record 
+     * @returns 
+     */
     private extractYear(record: any): string | null {
+        // Campo 210 subcampo d -> ano de publicação
         if (record["210"] && record["210"].d) {
             const year = String(record["210"].d).match(/\d{4}/)
             return year ? year[0] : null
@@ -261,6 +316,7 @@ export class DatabaseService {
     }
 
     private extractPublisher(record: any): string | null {
+        // Campo 210 subcampo c -> nome da editora
         if (record["210"] && record["210"].c) {
             return String(record["210"].c).trim()
         }
@@ -268,6 +324,7 @@ export class DatabaseService {
     }
 
     private extractISBN(record: any): string | null {
+        // Campo 010 subcampo a -> ISBN (normalizado sem espaços e traços)
         if (record["010"] && record["010"].a) {
             return String(record["010"].a).replace(/[-\s]/g, "").trim()
         }
@@ -275,6 +332,7 @@ export class DatabaseService {
     }
 
     private extractEdition(record: any): string | null {
+        // Campo 205 subcampo a -> número/nome da edição
         if (record["205"] && record["205"].a) {
             return String(record["205"].a).trim()
         }
@@ -282,26 +340,58 @@ export class DatabaseService {
     }
 
     /**
-     * Extrai valores dos campos para verificação de duplicados
+     * Extrai valores relevantes de um conjunto de campos para posterior verificação
+     * 
+     * Contexto:
+     * - O sistema trabalha com registos bibliográficos em formato UNIMARC
+     * - Cada campo pode ser de dois tipos:
+     * 1. DATA -> possui subcampos
+     * 2. CONTROL -> possui apenas um valor simples
+     * 
+     * Função:
+     * - Cria um objeto chave-valor (`values`) onde a chave é a tag do campo:
+     *      -> Objeto de subcampos (DATA)
+     *      -> Valor direto (CONTROL)
+     * - Este resultado é usado depois para alimentar estratégias de detecção de duplicados
      */
 
     private extractFieldValues(fields: SaveRecordData["fields"]): Record<string, any> {
+        // Objeto final que mapeia "tag" -> valor ou objeto de subcampos
         const values: Record<string, any> = {}
 
+        // Percorre todos os campos do registo
         for (const field of fields) {
+
+            // Caso 1: Campos de dados (DATA) com subcampos, guarda o objeto de subcampos inteiro
             if (field.fieldType === FieldType.DATA && field.subfields) {
                 const subfieldsObj = field.subfields as Record<string, any>
                 values[field.tag] = subfieldsObj
+
+                // Caso 2: Campos de controlo (CONTROL) com valores simples -> guarda o valor diretamente
             } else if (field.fieldType === FieldType.CONTROL && field.value) {
                 values[field.tag] = field.value
             }
+
+            // Campos que não têm subcampos/valor ou não se enquadram nos tipos acima são ignorados
         }
 
+        // Retorna o objeto com todos os valores organizados por "tag"
         return values
     }
 
     /**
-     * Verifica duplicados utilizando uma estratégia específica
+     * Verifica duplicados utilizando uma estratégia específica de correspondência de campos
+     * 
+     * Contexto:
+     * - O sistema trabalha com registos UNIMARC armazenados na base de dados
+     * - A estratégia define quais campos/subcampos devem ser comparados para identificar duplicados
+     * - Existem estratégias simples (ex. ISBN) e estratégias compostas (vários campos)
+     * 
+     * Fluxo geral:
+     * 1. Estratégia ISBN - busca direta na base de dados (mais rápido)
+     * 2. Outras estratégias - coleta valores relevantes e faz busca por múltiplos campos
+     * 3. Filtra resultados para registos que batem exatamente com todos os campos exigidos
+     * 4. Passa registros candidatos para `isDuplicateOrDifferentEdition()` para validar se é duplicado ou apenas outra edição.
      */
 
     private async checkDuplicateByStrategy(
@@ -311,12 +401,15 @@ export class DatabaseService {
         console.log(`Checking strategy: ${strategy.name}`)
         console.log(`Available field values:`, Object.keys(fieldValues))
 
-        // Para estratégias simples como ISBN, usar busca direta
+        // === 1. Estratégia especial: ISBN ===
+        // Se a estratégia for ISBN e o registo tiver campo "010" (ISBN), busca por correspondênciia direta na base de dados
         if (strategy.name === "ISBN" && fieldValues["010"]) {
             const isbn = fieldValues["010"].a
             if (isbn) {
+                // Limpa ISBN (remove hífens e espaços)
                 const cleanISBN = String(isbn).replace(/[-\s]/g, "").trim()
 
+                // Procura na base de dados por registo que tenha subcampo "a" do campo "010" contendo o ISBN limpo
                 const existingRecord = await prisma.catalogRecord.findFirst({
                     where: {
                         fields: {
@@ -333,13 +426,14 @@ export class DatabaseService {
                         fields: {
                             where: {
                                 tag: {
-                                    in: strategy.fields,
+                                    in: strategy.fields,    // Carrega só campos relevantes para análise posterior
                                 },
                             },
                         },
                     },
                 })
 
+                // Se encontrou, retorna como duplicado
                 if (existingRecord) {
                     console.log(`ISBN duplicate found: ${cleanISBN}`)
                     return { isDuplicate: true, existingRecord }
@@ -347,23 +441,24 @@ export class DatabaseService {
             }
         }
 
-        // Para outras estratégias, usar busca por múltiplos campos
-        const extractedValues = []
+        // === 2. Estratégias compostas (múltiplos campos/subcampos) ===
+        const extractedValues = []      // Valores extraídos para degug
         const fieldChecks = []
 
+        // Percorre os campos definidos na estratégia
         for (let i = 0; i < strategy.fields.length; i++) {
             const fieldTag = strategy.fields[i]
             const subfieldCodes = strategy.subfields[i].split(",")
 
-            if (!fieldValues[fieldTag]) continue
+            if (!fieldValues[fieldTag]) continue    // Campo não existe no registo atual
 
             let value = ""
 
             if (fieldTag.startsWith("0")) {
-                // Campo de controle
+                // Campo de controle - valor direto
                 value = String(fieldValues[fieldTag]).trim()
             } else {
-                // Campo de dados - extrair subcampos
+                // Campo de dados - juntar valores dos subcampos definidos
                 const subfields = fieldValues[fieldTag]
                 const parts = []
 
@@ -376,6 +471,7 @@ export class DatabaseService {
                     }
                 }
 
+                // Junta partes, remove vírgulas e limpa os espaços
                 value = parts
                     .join(" ")
                     .replace(/,(\s*),/g, ",")
@@ -386,18 +482,20 @@ export class DatabaseService {
                 }
             }
 
+            // Só adiciona se o valor atende ao tamanho mínimo definido na estratégia (se houver)
             if (value && (!strategy.minLength || value.length >= strategy.minLength)) {
                 extractedValues.push(value)
                 fieldChecks.push({ tag: fieldTag, value, subfieldCodes })
             }
         }
 
+        // Se não encontrou nenhum campo válido para a estratégia, encerra
         if (fieldChecks.length === 0) {
             console.log(`No valid fields found for strategy ${strategy.name}`)
             return { isDuplicate: false }
         }
 
-        // Buscar todos os registros que tenham pelo menos um dos campos
+        // === 3. Busca inicial na base de dados por registos que contenham pelo menos um dos campos definidos  ===
         const allRecords = await prisma.catalogRecord.findMany({
             where: {
                 fields: {
@@ -412,14 +510,14 @@ export class DatabaseService {
                 fields: {
                     where: {
                         tag: {
-                            in: ["010", "200", "205", "210", "700"], // Incluir campos relevantes para análise
+                            in: ["010", "200", "205", "210", "700"], // Campos relevantes para análise detalhada
                         },
                     },
                 },
             },
         })
 
-        // Verificar manualmente se algum registro coincide com todos os critérios
+        // === 4. Verificação manual dos registos retornados ===
         for (const record of allRecords) {
             let matchCount = 0
 
@@ -428,12 +526,12 @@ export class DatabaseService {
 
                 if (recordField) {
                     if (check.tag.startsWith("0")) {
-                        // Campo de controle
+                        // Comparação direta para campos de controlo
                         if (recordField.value === check.value) {
                             matchCount++
                         }
                     } else {
-                        // Campo de dados
+                        // Comparação campo/subcampo para campos de dados
                         const recordSubfields = recordField.subfields as any
                         if (recordSubfields) {
                             let subfieldMatch = true
@@ -442,6 +540,7 @@ export class DatabaseService {
                                 const expectedValue = fieldValues[check.tag][code]
                                 const recordValue = recordSubfields[code]
 
+                                // Normaliza valores para comparação (remove vírgulas no fim, trim)
                                 if (expectedValue && recordValue) {
                                     const cleanExpected = String(expectedValue).replace(/,$/, "").trim()
                                     const cleanRecord = String(recordValue).replace(/,$/, "").trim()
@@ -451,7 +550,7 @@ export class DatabaseService {
                                         break
                                     }
                                 } else if (expectedValue || recordValue) {
-                                    // Um tem valor e outro não
+                                    // Um tem valor e o outro não, não bate
                                     subfieldMatch = false
                                     break
                                 }
@@ -465,11 +564,11 @@ export class DatabaseService {
                 }
             }
 
-            // Se todos os campos coincidem, verificar se é duplicado ou edição diferente
+            // Se todos os campos definidos na estratégia bateram -> possível duplicado
             if (matchCount === fieldChecks.length) {
                 console.log(`Potential match found with record ID: ${record.id}`)
 
-                // Converter record.fields para o formato esperado
+                // Converte o formato do registo encontrado para o esperado pela função de análise
                 const existingRecordData: Record<string, any> = {}
                 for (const field of record.fields) {
                     if (field.fieldType === "DATA" && field.subfields) {
@@ -479,6 +578,7 @@ export class DatabaseService {
                     }
                 }
 
+                // Chama função auxiliar para decidir se é realmente duplicado ou apenas outra edição
                 const duplicateAnalysis = await this.isDuplicateOrDifferentEdition(fieldValues, existingRecordData, strategy)
 
                 if (duplicateAnalysis.isDuplicate) {
@@ -486,11 +586,12 @@ export class DatabaseService {
                     return { isDuplicate: true, existingRecord: record }
                 } else {
                     console.log(`Strategy "${strategy.name}" detected different edition: ${duplicateAnalysis.reason}`)
-                    // Continue checking other records
+                    // Continua a verificar outros registos
                 }
             }
         }
 
+        // Se nenhum registo correspondeu completamente, não há duplicados
         console.log(`Strategy "${strategy.name}" found no duplicates`)
         return { isDuplicate: false }
     }
@@ -502,28 +603,31 @@ export class DatabaseService {
         try {
             const { templateId, templateName, templateDesc, textUnimarc, template, fields } = data
 
-            // NOVO: Verificar se o registro já existe (passar templateName)
+            // Antes de salvar, verifica se já existe um registo duplicado para evitar redundância no catálogo
+            // Esta validação é fundamental para manter a integridade e evitar registos repetidos
             const duplicateCheck = await this.checkDuplicateRecord(fields, templateName)
             if (duplicateCheck.isDuplicate) {
+                // Caso seja duplicado, extraímos informações úteis
                 const existingRecord = duplicateCheck.existingRecord
                 const existingTitle =
                     existingRecord?.fields?.find((f: any) => f.tag === "200")?.subfields?.a || "Título não encontrado"
                 const existingResponsible =
                     existingRecord?.fields?.find((f: any) => f.tag === "700")?.subfields?.a || "Responsável não encontrado"
 
+                // Lançamos uma excepção que contem dados suficientes para o utilizador perceber o conflito
                 throw new Error(
                     `Registro duplicado encontrado! Já existe um registro com título "${existingTitle}" e responsável "${existingResponsible}". ID do registro existente: ${existingRecord.id}`,
                 )
             }
 
-            // Prepara os campos no formato que o Prisma espera
+            // Converte os campos recebidos para o formato esperado pelo Prisma antes de os inserir
             const fieldsInput = this.prepareFieldsForPrisma(data.fields, template)
 
-            // Cria o registro principal
+            // Cria o registro principal na base de dados (catalogRecord) juntamente com os campos
             const catalogRecord = await prisma.catalogRecord.create({
                 data: {
                     templateName,
-                    templateDesc: templateDesc || `Registro ${templateName}`,
+                    templateDesc: templateDesc || `Registro ${templateName}`,   // Se não houver descrição, cria um padrão
                     recordTemplateId: templateId,
                     textUnimarc,
                     fields: {
@@ -531,33 +635,34 @@ export class DatabaseService {
                     },
                 },
                 include: {
-                    fields: true,
+                    fields: true,   // Inclui os campos para uso posterior (associações com pessoas e editores)
                 },
             })
 
-            // Processar pessoas dos 'fields' e ligá-las
-            // Identificar campos que podem conter pessoas (ex: 7xx)
+            // === Processamento de Pessoas ===
+            // Definimos as tags que potencialmente representam pessoas no UNIMARC (ex: 700 - autor principal)
             const potentialPersonFields = [
                 "700",
                 "701",
                 "702",
-                // Adicionar mais tags que representam pessoas
+                // Mais tags podem ser adicionadas futuramente
             ]
 
             for (const field of fields) {
-                // Iterar sobre os RecordField[]
+                // Ignora campos que não são de pessoas
                 if (!potentialPersonFields.includes(field.tag)) {
-                    continue // Ignorar se não for um campo de pessoa potencial
+                    continue
                 }
 
                 let personName: string | undefined
 
                 if (field.fieldType === FieldType.DATA && field.subfields) {
+                    // Para campos de dados, extrai subcampos relevantes
                     const subfieldsObj = field.subfields as Record<string, any>
-                    // Lógica aprimorada para extrair o nome completo de campos de dados como 700
                     const nameParts: string[] = []
+
                     if (subfieldsObj.a) {
-                        // Subcampo $a (entrada principal, ex: Tordo,)
+                        // Extrai a parte principal do nome
                         if (Array.isArray(subfieldsObj.a)) {
                             nameParts.push(String(subfieldsObj.a[0]).trim())
                         } else if (typeof subfieldsObj.a === "string") {
@@ -565,38 +670,38 @@ export class DatabaseService {
                         }
                     }
                     if (subfieldsObj.b) {
-                        // Subcampo $b (outras partes do nome, ex: João)
+                        // Extrai a parte complementar do nome
                         if (Array.isArray(subfieldsObj.b)) {
                             nameParts.push(String(subfieldsObj.b[0]).trim())
                         } else if (typeof subfieldsObj.b === "string") {
                             nameParts.push(subfieldsObj.b.trim())
                         }
                     }
-                    // Concatena as partes do nome, removendo vírgulas soltas e espaços extras
+                    // Monta o nome completo e remove vírgulas e espaços extra
                     personName = nameParts
                         .join(" ")
                         .replace(/,(\s*),/g, ",")
                         .replace(/,$/, "")
                         .trim()
-                    // Se o nome ainda terminar com vírgula, remove-a (ex: "Tordo,")
+
+                    // Caso ainda termine com vírgula, remove
                     if (personName.endsWith(",")) {
                         personName = personName.slice(0, -1).trim()
                     }
                 } else if (field.fieldType === FieldType.CONTROL && field.value) {
-                    // Para campos de controlo, o valor é diretamente o nome (se houver algum campo de controlo de pessoa no futuro)
+                    // Para campos de controlo (mais raros para pessoas), usamos o valor diretamente
                     personName = field.value.trim()
                 }
 
                 if (personName) {
-                    // Inferir o papel da pessoa usando OpenAI
+                    // Utiliza IA para inferir o papel das pessoas
                     const role = await this.inferPersonRole(field.tag, field.fieldName || null)
 
-                    // Encontrar ou criar a Pessoa
+                    // Cria ou atualiza a pessoa na base de dados
                     const person = await prisma.person.upsert({
                         where: { name: personName },
                         update: {
-                            // A lógica de atualização pode ser refinada. Por agora, garante que o tipo é definido.
-                            type: PersonRole.OTHER, // Pode ser ajustado para ser mais inteligente
+                            type: PersonRole.OTHER, // Valor genérico por agora; pode ser refinado com lógica mais avançada
                         },
                         create: {
                             name: personName,
@@ -604,7 +709,7 @@ export class DatabaseService {
                         },
                     })
 
-                    // Ligar o CatalogRecord à Pessoa através da tabela de junção RecordPerson
+                    // Associa a pessoa ao registo na tabela de junção
                     await prisma.recordPerson.upsert({
                         where: {
                             recordId_personId_role: {
@@ -623,7 +728,8 @@ export class DatabaseService {
                 }
             }
 
-            const potentialPublisherFields = ["210"] // Campo de Publicação, Distribuição, etc
+            // === Processamento de Editoras ===
+            const potentialPublisherFields = ["210"]    // Tag que representa dados de publicação.
 
             for (const field of fields) {
                 if (!potentialPublisherFields.includes(field.tag)) {
@@ -634,7 +740,7 @@ export class DatabaseService {
 
                 if (field.fieldType === FieldType.DATA && field.subfields) {
                     const subfieldsObj = field.subfields as Record<string, any>
-                    // O subcampo 'c' do campo 210 é o "Nome do editor, produtor e/ou distribuidor"
+                    // Subcampo 'c' contém o nome do editor/produtor/distribuidor
                     if (subfieldsObj.c) {
                         if (Array.isArray(subfieldsObj.c)) {
                             publisherName = String(subfieldsObj.c[0].trim())
@@ -645,16 +751,16 @@ export class DatabaseService {
                 }
 
                 if (publisherName) {
-                    // Enncontrar ou criar a Editora
+                    // Cria ou atualiza a editora
                     const publisher = await prisma.publisher.upsert({
                         where: { name: publisherName },
-                        update: {}, // Nenhuma atualização específica necessária se já existir
+                        update: {},
                         create: {
                             name: publisherName,
                         },
                     })
 
-                    // Ligar o CatalogRecord à Editora através da tabela de junção RecordPublisher
+                    // Associa a editora ao registo na tabela de junção
                     await prisma.recordPublisher.upsert({
                         where: {
                             recordId_publisherId: {
@@ -662,7 +768,7 @@ export class DatabaseService {
                                 publisherId: publisher.id,
                             },
                         },
-                        update: {}, // Nenhuma atualização necessária se já existir
+                        update: {},
                         create: {
                             recordId: catalogRecord.id,
                             publisherId: publisher.id,
@@ -671,16 +777,22 @@ export class DatabaseService {
                 }
             }
 
+            // Registo guardado com sucesso
             console.log(`Novo registro criado com sucesso: ID ${catalogRecord.id}`)
             return catalogRecord.id
+
         } catch (error) {
+            // Captura qualquer erro e relança-o para ser tratado pela camada superior (ex: rota da API)
             console.error("Erro ao salvar registro:", error)
-            throw error // Re-throw para que a API route possa capturar e retornar o erro específico
+            throw error
         }
     }
 
     /**
      * Busca autores e o número de registos associados a cada um
+     * Esta função consulta a tabela 'person' e filtra pelos tipos
+     * AUTHOR ou OTHER e conta quantos registos ('CatalogRecord')
+     * cada autor possui através da relação 'RecordPerson'
      * @param fields 
      * @param template 
      * @returns 
@@ -689,7 +801,8 @@ export class DatabaseService {
         try {
             const authors = await prisma.person.findMany({
                 where: {
-                    // MODIFICADO: Usar o operador 'in' para incluir múltiplos PersonRole
+                    // Utiliza o operador in para permitir múltiplos tipos de pessoa
+                    // Filtra apenas por tipos relevantes podendo expandir no futuro
                     type: {
                         in: [PersonRole.AUTHOR, PersonRole.OTHER],
                     },
