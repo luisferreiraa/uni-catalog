@@ -1,51 +1,74 @@
-"use client"
+"use client"    // Directive indicates this is a client-side React component
+// Importing UI components from the app component library
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+// Importing React hooks for state management and side effects
 import { useState, useEffect } from "react"
+// Importing custom component for displaying questions
 import QuestionDisplay from "@/components/question-display"
+// Importing TypeScript type definitions for the app
 import type { CatalogResponse, ConversationState } from "@/app/types/unimarc"
+// Importing additional UI components
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { BookOpen, Edit } from "lucide-react" // Importar Edit icon
+// Importing icons from Lucide React library
+import { BookOpen, Edit } from "lucide-react"
 
+// Main component function for the homepage
 export default function HomePage() {
+  // State for storing the current API response
   const [currentResponse, setCurrentResponse] = useState<CatalogResponse | null>(null)
+  // State for storing loading status
   const [loading, setLoading] = useState(false)
+  // State for storing the initial description input by user
   const [description, setDescription] = useState("")
+  // State for storing the user's response to questions
   const [userResponse, setUserResponse] = useState("")
+  // State for tracking the conversation state
   const [conversationState, setConversationState] = useState<ConversationState | null>(null)
 
-  // Auto-continuação para template-selected, bulk-auto-filled, e field-auto-filled
+  // useEffect hook for auto-continuation logic
+  // This handles automatic progression for certain types
   useEffect(() => {
     console.log("useEffect triggered - currentResponse:", currentResponse?.type)
     console.log("useEffect triggered - loading:", loading)
     console.log("useEffect triggered - conversationState:", conversationState?.step)
+
+    // Don't auto-continue if already loading
     if (loading) {
       console.log("useEffect: Skipping - already loading")
       return
     }
+
+    // Don't auto-continue if no response or conversation state
     if (!currentResponse || !conversationState) {
       console.log("useEffect: Skipping - no response or conversation state")
       return
     }
-    // Auto-continuar apenas para estes tipos de resposta
+
+    // Auto-continue only for these specific response types
     const shouldAutoContinue = ["template-selected", "bulk-auto-filled", "field-auto-filled"].includes(
       currentResponse.type,
     )
     if (shouldAutoContinue) {
       console.log(`useEffect: Auto-continuing for ${currentResponse.type}`)
+      // Set a timeout to automatically continue after 1.5 seconds
       const timer = setTimeout(() => {
         handleUserResponse()
-      }, 1500) // 1.5 segundos para melhor feedback visual
+      }, 1500)    // 1.5 seconds for better visual feedback
     }
-  }, [currentResponse, loading, conversationState])
+  }, [currentResponse, loading, conversationState])   // Dependencies for the effect
 
+  // Function to handle the initial cataloguing request
   const handleInitialRequest = async () => {
     console.log("handleInitialRequest called with description:", description)
     setLoading(true)
     try {
+      // Prepare thee payload for the API request
       const payload = { description }
       console.log("Sending initial payload:", payload)
+
+      // Make API request to the uni-dialog endpoint
       const res = await fetch("/api/uni-dialog", {
         method: "POST",
         headers: {
@@ -53,8 +76,12 @@ export default function HomePage() {
         },
         body: JSON.stringify(payload),
       })
+
+      // Parse the response data
       const data: CatalogResponse = await res.json()
       console.log("Received initial response:", data)
+
+      // Update state with the response data
       setCurrentResponse(data)
       setConversationState(data.conversationState || null)
     } catch (error) {
@@ -64,18 +91,23 @@ export default function HomePage() {
     }
   }
 
+  // Function to handle user responses to questions
+  // Added fieldToEdit paramater for field editing functionality
   const handleUserResponse = async (directResponse?: string, fieldToEdit?: string) => {
     // Adicionado fieldToEdit
     console.log("handleUserResponse called with:", directResponse || userResponse)
     setLoading(true)
     try {
+      // Prepare the payload for the API request
       const payload = {
         description,
         conversationState,
         userResponse: directResponse !== undefined ? directResponse : userResponse,
-        fieldToEdit, // Incluir fieldToEdit no payload
+        fieldToEdit,    // Include fieldToEdit in the payload
       }
       console.log("Sending payload:", payload)
+
+      // Make API request to the uni-dialog endpoint
       const res = await fetch("/api/uni-dialog", {
         method: "POST",
         headers: {
@@ -83,11 +115,16 @@ export default function HomePage() {
         },
         body: JSON.stringify(payload),
       })
+
+      // Parse the response data
       const data: CatalogResponse = await res.json()
       console.log("Received response:", data)
+
+      // Update state with the response data
       setCurrentResponse(data)
       setConversationState(data.conversationState || null)
-      // Só limpa a resposta se não for uma resposta direta dos botões
+
+      // Only clear the response if it's not a direct response from buttons
       if (!directResponse) {
         setUserResponse("")
       }
@@ -98,14 +135,17 @@ export default function HomePage() {
     }
   }
 
+  // Function to handle the review fields action
   const handleReviewFields = () => {
-    handleUserResponse("__REVIEW_FIELDS__") // Comando especial para o backend
+    handleUserResponse("__REVIEW_FIELDS__")   // Special command for the backend
   }
 
+  // Function to handlee field editing
   const handleEditField = (fieldTag: string) => {
-    handleUserResponse("__EDIT_FIELD__", fieldTag) // Comando especial e o campo a editar
+    handleUserResponse("__EDIT_FIELD__", fieldTag)    // Special command and field to edit
   }
 
+  // Component render method
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-gray-900 font-poppins">
       <div className="max-w-4xl w-full">
@@ -118,7 +158,7 @@ export default function HomePage() {
             <p className="text-gray-700 text-sm mt-2">Otimizado com IA para eficiência máxima</p>
           </CardHeader>
           <CardContent className="space-y-6 w-full flex-grow flex flex-col justify-center">
-            {/* Status info */}
+            {/* Status information display */}
             {conversationState && (
               <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200 w-full max-w-lg mx-auto shadow-sm">
                 <div className="flex items-center justify-between text-sm">
@@ -139,7 +179,7 @@ export default function HomePage() {
                 )}
               </div>
             )}
-            {/* Input inicial */}
+            {/* Initial input form */}
             {!currentResponse && (
               <div className="w-full max-w-md mx-auto space-y-4">
                 <Input
@@ -158,10 +198,10 @@ export default function HomePage() {
                 </Button>
               </div>
             )}
-            {/* Respostas e estados */}
+            {/* Responses and state displays */}
             {currentResponse && (
               <div className="w-full max-w-lg mx-auto space-y-6">
-                {/* Botão de Revisão/Edição */}
+                {/* Review/ Edit button */}
                 {conversationState &&
                   conversationState.step !== "template-selection" &&
                   conversationState.step !== "completed" && (
@@ -177,7 +217,7 @@ export default function HomePage() {
                     </div>
                   )}
 
-                {/* Pergunta ao usuário */}
+                {/* User question display */}
                 {currentResponse.type === "field-question" && (
                   <>
                     <QuestionDisplay response={currentResponse} />
@@ -200,7 +240,7 @@ export default function HomePage() {
                     </div>
                   </>
                 )}
-                {/* Confirmação de repetição */}
+                {/* Repeat confirmation */}
                 {currentResponse.type === "repeat-confirmation" && (
                   <Card className="p-4 bg-gray-50 border border-gray-200 text-amber-600 rounded-lg shadow-sm">
                     <p className="mb-4">{currentResponse.question}</p>
@@ -223,7 +263,7 @@ export default function HomePage() {
                     </div>
                   </Card>
                 )}
-                {/* Template selecionado */}
+                {/* Template selected */}
                 {currentResponse.type === "template-selected" && (
                   <Card className="p-4 bg-gray-50 border border-gray-200 text-green-600 rounded-lg shadow-sm">
                     <div className="flex items-center justify-between">
@@ -240,15 +280,15 @@ export default function HomePage() {
                     </div>
                   </Card>
                 )}
-                {/* Preenchimento automático em massa */}
+                {/* Bulk auto-fill completed */}
                 {currentResponse.type === "bulk-auto-filled" && (
                   <Card className="p-4 bg-gray-50 border border-gray-200 text-lime-600 rounded-lg shadow-sm">
                     <div className="flex items-center justify-between mb-3">
-                      <p className="font-semibold">🎉 Preenchimento Automático Concluído!</p>
+                      <p className="font-semibold">Preenchimento Automático Concluído!</p>
                       {loading && (
                         <div className="flex items-center text-sm text-gray-500">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-lime-600 mr-2"></div>
-                          Continuando...
+                          A continuar...
                         </div>
                       )}
                     </div>
@@ -282,7 +322,7 @@ export default function HomePage() {
                     )}
                   </Card>
                 )}
-                {/* Exibição de campos para revisão */}
+                {/* Review fields display */}
                 {currentResponse.type === "review-fields-display" && (
                   <Card className="p-4 bg-gray-50 border border-gray-200 text-blue-600 rounded-lg shadow-sm">
                     <p className="font-semibold mb-4">Campos Preenchidos:</p>
@@ -299,7 +339,7 @@ export default function HomePage() {
                               </Badge>
                               <span className="text-sm text-gray-800">
                                 {typeof value === "object"
-                                  ? JSON.stringify(value) // Para objetos/arrays, mostra o JSON
+                                  ? JSON.stringify(value)
                                   : String(value)}
                               </span>
                             </div>
@@ -319,7 +359,7 @@ export default function HomePage() {
                       )}
                     </div>
                     <Button
-                      onClick={() => handleUserResponse("__CONTINUE_FROM_REVIEW__")} // Comando para continuar
+                      onClick={() => handleUserResponse("__CONTINUE_FROM_REVIEW__")}
                       className="mt-4 w-full rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold"
                       disabled={loading}
                     >
@@ -327,7 +367,7 @@ export default function HomePage() {
                     </Button>
                   </Card>
                 )}
-                {/* Registro completo */}
+                {/* Record complete */}
                 {currentResponse.type === "record-complete" && (
                   <Card className="p-4 bg-gray-50 border border-gray-200 text-purple-600 rounded-lg shadow-sm">
                     <p>Todos os campos preenchidos! Clique para confirmar e gravar.</p>
@@ -340,7 +380,7 @@ export default function HomePage() {
                     </Button>
                   </Card>
                 )}
-                {/* Registro salvo */}
+                {/* Record saveed */}
                 {currentResponse.type === "record-saved" && (
                   <Card className="p-4 bg-gray-50 border border-gray-200 text-blue-600 rounded-lg shadow-sm">
                     <p>
@@ -362,7 +402,7 @@ export default function HomePage() {
                     </Button>
                   </Card>
                 )}
-                {/* Erro */}
+                {/* Error display */}
                 {currentResponse.type === "error" && (
                   <Card className="p-4 bg-gray-50 border border-gray-200 text-red-600 rounded-lg shadow-sm">
                     <p>Erro: {currentResponse.error}</p>
@@ -379,7 +419,7 @@ export default function HomePage() {
                     </Button>
                   </Card>
                 )}
-                {/* Template não encontrado */}
+                {/* Template not found */}
                 {currentResponse.type === "template-not-found" && (
                   <Card className="p-4 bg-gray-50 border border-gray-200 text-orange-600 rounded-lg shadow-sm">
                     <p>{currentResponse.error}</p>
